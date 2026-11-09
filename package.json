@@ -1,0 +1,52 @@
+{
+  "name": "@arraypress/number-parse",
+  "version": "1.0.0",
+  "description": "Read numbers and prices the way people type them and pages show them: locale decimal marks, thousands, Indian and apostrophe groups, signs and accounting parentheses, and currency symbols, codes and shop markers from Intl.",
+  "type": "module",
+  "main": "src/index.js",
+  "types": "src/index.d.ts",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "import": "./src/index.js"
+    }
+  },
+  "files": [
+    "src"
+  ],
+  "scripts": {
+    "test": "npm run lint && npm run typecheck && node --test tests/*.test.js && npm run duplication",
+    "lint": "eslint .",
+    "typecheck": "tsc -p . && tsc -p tsconfig.types.json && diff -r -x '*.js' .types src && rm -rf .types",
+    "types": "tsc -p tsconfig.types.json && cp -R .types/. src/ && rm -rf .types",
+    "duplication": "jscpd"
+  },
+  "keywords": [
+    "number",
+    "parse",
+    "locale",
+    "decimal-separator",
+    "thousands-separator",
+    "currency",
+    "price",
+    "intl"
+  ],
+  "author": "David Sherlock",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/arraypress/number-parse.git"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^26.6.6",
+    "eslint": "^10.14.0",
+    "globals": "^17.14.0",
+    "jscpd": "^5.4.3",
+    "typescript": "^7.0.2"
+  }
+}
