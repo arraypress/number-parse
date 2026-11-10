@@ -400,8 +400,9 @@ export function symbolCurrency(symbol, reader) {
  * Price prefixes and suffixes as shops write them, where the engine's
  * symbols disagree or have none: "C$" is Nicaragua's to `Intl` and Canada's
  * to shops; "zł", "Kč", "Ft", "RM" (Malaysia), "Rp" (Indonesia), "lei"
- * (Romania), "TL" (Turkey), "S/" (Peru) and "Fr." (Switzerland) are
- * letters, too risky in running text but plain next to a price.
+ * (Romania), "TL" (Turkey), "S/" (Peru), "Fr." (Switzerland) and the
+ * characters for yen, yuan and won ("円", "元", "원") are letters, too risky
+ * in running text but plain next to a price.
  *
  * @type {ReadonlyArray<readonly [string, string]>}
  */
@@ -409,7 +410,7 @@ export const SHOP_MARKERS = Object.freeze([
   ['US$', 'USD'], ['CA$', 'CAD'], ['C$', 'CAD'], ['AU$', 'AUD'], ['A$', 'AUD'], ['NZ$', 'NZD'],
   ['HK$', 'HKD'], ['S$', 'SGD'], ['R$', 'BRL'], ['MX$', 'MXN'], ['CHF', 'CHF'], ['zł', 'PLN'],
   ['Kč', 'CZK'], ['Ft', 'HUF'], ['RM', 'MYR'], ['Rp', 'IDR'], ['lei', 'RON'], ['TL', 'TRY'],
-  ['S/', 'PEN'], ['Fr.', 'CHF'],
+  ['S/', 'PEN'], ['Fr.', 'CHF'], ['円', 'JPY'], ['元', 'CNY'], ['원', 'KRW'],
 ].map((pair) => Object.freeze(/** @type {const} */ ([pair[0], pair[1]]))));
 
 /** @typedef {readonly [string, string | null]} Marker A marker and its currency (null: the reader decides). */
@@ -499,16 +500,17 @@ export function parsePrice(text, { locale = 'en', decimal, knows = (code) => ISO
 // MARK: - Prices in text
 
 /**
- * Markers in letters that several currencies write, which pages put next to
- * prices: "kr" (the Swedish, Norwegian, Danish and Icelandic crowns; "kr."
- * in Danish) and "Rs" (the rupees of India, Pakistan, Sri Lanka, Nepal and
- * Mauritius). Only the page can say which; {@link findPrices} reads them,
- * {@link parsePrice} doesn't.
+ * Markers several currencies write that `Intl`'s English data doesn't list
+ * as symbols, which pages put next to prices: "kr" (the Swedish, Norwegian,
+ * Danish and Icelandic crowns; "kr." in Danish), "Rs" (the rupees of India,
+ * Pakistan, Sri Lanka, Nepal and Mauritius) and "￥" (the full-width yen
+ * sign, Japan's and China's). Only the page can say which; {@link findPrices}
+ * reads them, {@link parsePrice} doesn't.
  */
-export const SHARED_LETTER_MARKERS = Object.freeze(['kr', 'kr.', 'Kr', 'Kr.', 'Rs', 'Rs.']);
+export const SHARED_MARKERS = Object.freeze(['kr', 'kr.', 'Kr', 'Kr.', 'Rs', 'Rs.', '￥']);
 
-/** How the shared letter markers' other spellings are written in `Intl`. */
-const MARKER_SPELLINGS = Object.freeze(/** @type {Record<string, string>} */ ({ 'kr.': 'kr', Kr: 'kr', 'Kr.': 'kr', 'Rs.': 'Rs' }));
+/** How the shared markers' other spellings are written in `Intl`. */
+const MARKER_SPELLINGS = Object.freeze(/** @type {Record<string, string>} */ ({ 'kr.': 'kr', Kr: 'kr', 'Kr.': 'kr', 'Rs.': 'Rs', '￥': '¥' }));
 
 /** Readings `Intl`'s English data leaves out: India writes "Rs." as often as "₹". */
 const MORE_OWNERS = Object.freeze(/** @type {Record<string, readonly string[]>} */ ({ Rs: ['INR'] }));
@@ -613,6 +615,14 @@ export function currencyDigits(code) {
  *   GBP, "¥" JPY, "₩" KRW), and null for "kr", "Rs" and "₨".
  */
 
+/**
+ * What a price can't run into, as a regex class's contents: digits, and the
+ * letters of scripts that space their words (Latin, Greek, Cyrillic), so
+ * "$5k" and "12 USDT" aren't prices while Japanese and Chinese, which don't
+ * space words, can run text up to one ("税込1,200円送料無料").
+ */
+const WORDISH = '\\p{N}\\p{Script=Latin}\\p{Script=Greek}\\p{Script=Cyrillic}';
+
 /** @type {{pattern: RegExp, number: string} | null} */
 let textGrammar = null;
 
@@ -626,13 +636,13 @@ let textGrammar = null;
  */
 function inText() {
   if (textGrammar) return textGrammar;
-  const markers = [...prices().markers.map(([m]) => m), ...SHARED_LETTER_MARKERS].sort((a, b) => b.length - a.length);
+  const markers = [...prices().markers.map(([m]) => m), ...SHARED_MARKERS].sort((a, b) => b.length - a.length);
   const marker = `${markers.map(escapeRegExp).join('|')}|[A-Z]{3}`;
   const number = `(?:${DISPLAY_NUMBER_SOURCE})(?:[.,](?:--?|–|—))?`;
   const space = '[ \\u00A0\\u202F\\u2009]?';
-  const edge = '(?![\\p{L}\\p{N}]|[.,]\\p{N})';
+  const edge = `(?![${WORDISH}]|[.,]\\p{N})`;
   textGrammar = {
-    pattern: new RegExp(`(?<![\\p{L}\\p{N}])(?:(${marker})${space}(${number})${edge}|(${number})${space}(${marker})(?![\\p{L}\\p{N}]))`, 'gu'),
+    pattern: new RegExp(`(?<![${WORDISH}])(?:(${marker})${space}(${number})${edge}|(${number})${space}(${marker})(?![${WORDISH}]))`, 'gu'),
     number,
   };
   return textGrammar;
@@ -663,10 +673,13 @@ function priceAmount(digits, code, decimal) {
  * @param {string[]} codes - Its currencies.
  * @returns {string | null} The one there is, a shared symbol's usual one, or null.
  */
-const usualPick = (marker, codes) => (codes.length === 1 ? codes[0] : SHARED_SYMBOLS[marker] ?? null);
+const usualPick = (marker, codes) => (codes.length === 1 ? codes[0] : SHARED_SYMBOLS[MARKER_SPELLINGS[marker] ?? marker] ?? null);
 
 /** A currency code just after a price: "$12.99 CAD". */
 const TRAILING_CODE = /^[ \u00A0\u202F\u2009]?([A-Z]{3})(?![\p{L}\p{N}])/u;
+
+/** A currency code just before a shared symbol: "AUD $49.95", "CLP $12.500". */
+const LEADING_CODE = /(?<![\p{L}\p{N}])([A-Z]{3})[ \u00A0\u202F\u2009]?$/u;
 
 /** Words and dashes between the two ends of a range. */
 const RANGE_GAP = /^\s*(?:[-–—]|to|bis|à|a|até|tot|till|〜|~)\s*$/i;
@@ -741,21 +754,35 @@ export function findPrices(text, { locale = 'en', decimal, knows = isCurrencyCod
   const amountOf = (digits, code) => priceAmount(digits, code, mark);
   /** @type {FoundPrice[]} */
   const found = [];
-  for (const match of text.matchAll(inText().pattern)) {
+  const { pattern } = inText();
+  pattern.lastIndex = 0;
+  for (let match = pattern.exec(text); match; match = pattern.exec(text)) {
     const marker = match[1] ?? match[4];
     const digits = match[2] ?? match[3];
     const isCode = /^[A-Z]{3}$/.test(marker) && !SHOP_MARKERS.some(([m]) => m === marker);
-    if (isCode && !knows(marker, match[1] ? 'before' : 'after')) continue;
+    if (isCode && !knows(marker, match[1] ? 'before' : 'after')) {
+      // "UVP 129,99 €": the word isn't a currency, but what follows it may be a price.
+      if (match[1]) pattern.lastIndex = match.index + marker.length;
+      continue;
+    }
     const codes = isCode ? [marker] : symbolCurrencies(marker);
     if (!codes.length) continue;
-    let end = match.index + match[0].length;
-    // "$12.99 CAD": a code after a shared symbol's price says whose it is.
+    let start = match.index;
+    let end = start + match[0].length;
+    // "$12.99 CAD", "AUD $49.95": a code beside a shared symbol says whose it is.
     const named = codes.length > 1 && match[1] ? TRAILING_CODE.exec(text.slice(end)) : null;
-    const code = named && codes.includes(named[1]) ? named[1] : pick(marker, codes);
-    if (named && code === named[1]) end += named[0].length;
+    const leading = codes.length > 1 && match[1] && !(named && codes.includes(named[1])) ? LEADING_CODE.exec(text.slice(0, start)) : null;
+    let code = pick(marker, codes);
+    if (named && codes.includes(named[1])) {
+      code = named[1];
+      end += named[0].length;
+    } else if (leading && codes.includes(leading[1])) {
+      code = leading[1];
+      start -= leading[0].length;
+    }
     const amount = amountOf(digits, code);
     if (amount === null) continue;
-    found.push({ start: match.index, end, text: text.slice(match.index, end), marker, codes, code, amount });
+    found.push({ start, end, text: text.slice(start, end), marker, codes, code, amount });
   }
   return joinRanges(text, found, amountOf);
 }

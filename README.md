@@ -98,9 +98,12 @@ findPrices('2026, 20% off, TOP 10, 555-1234'); // []: no marker, or a code that'
 findPrices('1 234,56 kr', { pick: (marker, codes) => (codes.includes('SEK') ? 'SEK' : null) });
 ```
 
-A marker (symbol, shop marker, `SHARED_LETTER_MARKERS` "kr"/"Rs", or ISO code) before or after a
+A marker (symbol, shop marker, `SHARED_MARKERS` "kr"/"Rs"/"￥", or ISO code) before or after a
 shown number (`DISPLAY_NUMBER_SOURCE`), at most one space between, neither inside a longer word or
-number. Options: `locale`/`decimal` (for a number that reads either way when the currency can't
+number; digits and Latin, Greek or Cyrillic letters can't run into it, but Japanese and Chinese
+text can ("税込1,200円送料無料"). A code beside a shared symbol settles it ("$12.99 CAD",
+"AUD $49.95"); a capital word that isn't a currency doesn't hide the price after it ("UVP 129,99 €").
+Options: `locale`/`decimal` (for a number that reads either way when the currency can't
 say), `knows(code, place)` (default: ISO codes but `WORD_CODES`; CAD and TRY count after a number),
 and `pick(marker, codes)` (default: the one there is, or a shared symbol's usual reading; null for
 "kr", "Rs" and "₨").

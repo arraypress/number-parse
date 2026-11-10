@@ -166,8 +166,9 @@ export declare function symbolCurrency(symbol: string, reader?: CurrencyReader):
  * Price prefixes and suffixes as shops write them, where the engine's
  * symbols disagree or have none: "C$" is Nicaragua's to `Intl` and Canada's
  * to shops; "zł", "Kč", "Ft", "RM" (Malaysia), "Rp" (Indonesia), "lei"
- * (Romania), "TL" (Turkey), "S/" (Peru) and "Fr." (Switzerland) are
- * letters, too risky in running text but plain next to a price.
+ * (Romania), "TL" (Turkey), "S/" (Peru), "Fr." (Switzerland) and the
+ * characters for yen, yuan and won ("円", "元", "원") are letters, too risky
+ * in running text but plain next to a price.
  *
  * @type {ReadonlyArray<readonly [string, string]>}
  */
@@ -242,13 +243,14 @@ export type Price = {
  */
 export declare function parsePrice(text: string, { locale, decimal, knows, reader, display }?: PriceOptions): Price | null;
 /**
- * Markers in letters that several currencies write, which pages put next to
- * prices: "kr" (the Swedish, Norwegian, Danish and Icelandic crowns; "kr."
- * in Danish) and "Rs" (the rupees of India, Pakistan, Sri Lanka, Nepal and
- * Mauritius). Only the page can say which; {@link findPrices} reads them,
- * {@link parsePrice} doesn't.
+ * Markers several currencies write that `Intl`'s English data doesn't list
+ * as symbols, which pages put next to prices: "kr" (the Swedish, Norwegian,
+ * Danish and Icelandic crowns; "kr." in Danish), "Rs" (the rupees of India,
+ * Pakistan, Sri Lanka, Nepal and Mauritius) and "￥" (the full-width yen
+ * sign, Japan's and China's). Only the page can say which; {@link findPrices}
+ * reads them, {@link parsePrice} doesn't.
  */
-export declare const SHARED_LETTER_MARKERS: readonly string[];
+export declare const SHARED_MARKERS: readonly string[];
 /**
  * ISO 4217 codes that are also English words in capitals ("SHOP ALL 50",
  * "TOP 10", "TRY 3 FREE", "CAD 3D", "2 CUP"): {@link findPrices} doesn't take

@@ -9,7 +9,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   currencyDigits, currencySymbols, decimalMarkOf, decimalSeparator, DISPLAY_NUMBER_SOURCE, ECB_CURRENCIES, findPrices,
-  ISO_CURRENCIES, NUMBER_SOURCE, parseNumber, parsePrice, readNumber, RUPEE_SIGN, SHARED_LETTER_MARKERS, SHOP_MARKERS,
+  ISO_CURRENCIES, NUMBER_SOURCE, parseNumber, parsePrice, readNumber, RUPEE_SIGN, SHARED_MARKERS, SHOP_MARKERS,
   symbolCharacters, symbolCurrencies, symbolCurrency, WORD_CODES,
 } from '../src/index.js';
 
@@ -299,6 +299,13 @@ describe('findPrices', () => {
     ['$1,500', [['$1,500', 'USD', 1500]]],
     ['1,500 €', [['1,500 €', 'EUR', 1500]], { locale: 'de' }],
     ['KWD 1.500', [['KWD 1.500', 'KWD', 1.5]]],
+    ['AUD $49.95', [['AUD $49.95', 'AUD', 49.95]]],
+    ['CLP $12.500', [['CLP $12.500', 'CLP', 12500]]],
+    ['UVP 129,99 €', [['129,99 €', 'EUR', 129.99]]],
+    ['税込1,200円送料無料', [['1,200円', 'JPY', 1200]]],
+    ['価格￥1,200', [['￥1,200', 'JPY', 1200]]],
+    ['88元', [['88元', 'CNY', 88]]],
+    ['15,000원', [['15,000원', 'KRW', 15000]]],
   ];
   for (const [text, expected, options] of cases) {
     it(`finds ${text}`, () => assert.deepEqual(rows(text, options), expected));
@@ -315,7 +322,7 @@ describe('findPrices', () => {
     const [price] = findPrices('299 kr');
     assert.equal(price.code, null);
     assert.deepEqual(price.codes, ['DKK', 'ISK', 'NOK', 'SEK']);
-    assert.ok(SHARED_LETTER_MARKERS.includes('kr.'));
+    assert.ok(SHARED_MARKERS.includes('kr.'));
   });
 
   it('gives the marker, its place and the text as written', () => {
