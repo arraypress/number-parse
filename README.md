@@ -8,6 +8,9 @@ Read numbers and prices the way people type them and pages show them.
   "12,34,567"; signs "-5", "−5" (U+2212), "+5" and accounting parentheses "(1,200)".
 - **Prices:** "US$1,299.99", "1.299,99 €", "€ 12,50", "JPY 5,000", "R$ 50", "100 zł", from the
   engine's own currency data (`Intl`), plus the markers shops use where `Intl` disagrees.
+- **Prices in running text:** every price on a shop page's line ("Was $59.99, now $49.99",
+  "$10–20", "CHF 12.–", "1 234,56 kr"), with the currencies a shared marker can mean, so the page
+  can settle whose "$" or "kr" it is.
 
 Zero dependencies. Works in browsers (including extension content scripts), Node.js, Workers, Deno
 and Bun.
@@ -74,6 +77,33 @@ symbolCurrency('₨', { region: 'PK' });        // 'PKR'
 | `symbolCharacters()` | The single-character symbols, for a regex class. |
 | `SHOP_MARKERS` | `US$`, `CA$`, `C$`, `A$`, `R$`, `CHF`, `zł`, `Kč`, `Ft`… with their codes. |
 | `ECB_CURRENCIES`, `ISO_CURRENCIES`, `RUPEE_SIGN` | The ECB's 30 codes; every code the engine formats; `₨`. |
+| `symbolCurrencies(marker)` | Every currency a marker can mean, the usual one first: `'$'` → USD, ARS, AUD, CAD…; `'kr'` → DKK, ISK, NOK, SEK; `'CA$'` → CAD. |
+| `currencyDigits(code)` | The decimals a currency's prices show (2; JPY 0; KWD 3). |
+
+## Prices in running text
+
+```js
+import { findPrices } from '@arraypress/number-parse';
+
+findPrices('Was $59.99, now $49.99');
+// [{ start: 4, end: 10, text: '$59.99', marker: '$', codes: ['USD', 'ARS', …], code: 'USD', amount: 59.99 },
+//  { start: 16, end: 22, text: '$49.99', …, amount: 49.99 }]
+findPrices('$49.99 – $59.99')[0];            // { …, amount: 49.99, max: 59.99 } (also "$10–20", "10–20 €")
+findPrices('CHF 12.–')[0].amount;             // 12 (also "12,- €")
+findPrices('$12.99 CAD')[0].code;             // 'CAD': a code after a shared symbol settles it
+findPrices('€1.299')[0].amount;               // 1299: a price with 3 digits after its only mark groups thousands
+findPrices('2026, 20% off, TOP 10, 555-1234'); // []: no marker, or a code that's a word ("TOP", "ALL")
+
+// Whose "$", "¥" or "kr" is it? The page says (its declared currency, its country…):
+findPrices('1 234,56 kr', { pick: (marker, codes) => (codes.includes('SEK') ? 'SEK' : null) });
+```
+
+A marker (symbol, shop marker, `SHARED_LETTER_MARKERS` "kr"/"Rs", or ISO code) before or after a
+shown number (`DISPLAY_NUMBER_SOURCE`), at most one space between, neither inside a longer word or
+number. Options: `locale`/`decimal` (for a number that reads either way when the currency can't
+say), `knows(code, place)` (default: ISO codes but `WORD_CODES`; CAD and TRY count after a number),
+and `pick(marker, codes)` (default: the one there is, or a shared symbol's usual reading; null for
+"kr", "Rs" and "₨").
 
 ## Development
 

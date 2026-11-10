@@ -8,8 +8,9 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  currencySymbols, decimalMarkOf, decimalSeparator, DISPLAY_NUMBER_SOURCE, ECB_CURRENCIES, ISO_CURRENCIES, NUMBER_SOURCE,
-  parseNumber, parsePrice, readNumber, RUPEE_SIGN, SHOP_MARKERS, symbolCharacters, symbolCurrency,
+  currencyDigits, currencySymbols, decimalMarkOf, decimalSeparator, DISPLAY_NUMBER_SOURCE, ECB_CURRENCIES, findPrices,
+  ISO_CURRENCIES, NUMBER_SOURCE, parseNumber, parsePrice, readNumber, RUPEE_SIGN, SHARED_LETTER_MARKERS, SHOP_MARKERS,
+  symbolCharacters, symbolCurrencies, symbolCurrency, WORD_CODES,
 } from '../src/index.js';
 
 /**
@@ -220,5 +221,107 @@ describe('parsePrice', () => {
     assert.deepEqual(SHOP_MARKERS.find(([marker]) => marker === 'C$'), ['C$', 'CAD']);
     assert.deepEqual(parsePrice('C$10'), { amount: 10, code: 'CAD' });
     assert.ok(Object.isFrozen(SHOP_MARKERS[0]));
+  });
+});
+
+describe('symbolCurrencies', () => {
+  it('names the one currency of a shop marker or an unshared symbol', () => {
+    assert.deepEqual(symbolCurrencies('CA$'), ['CAD']);
+    assert.deepEqual(symbolCurrencies('€'), ['EUR']);
+    assert.deepEqual(symbolCurrencies('zł'), ['PLN']);
+    assert.deepEqual(symbolCurrencies('RM'), ['MYR']);
+  });
+
+  it('lists every currency of a shared one from Intl, the usual reading first', () => {
+    const dollars = symbolCurrencies('$');
+    assert.equal(dollars[0], 'USD');
+    for (const code of ['CAD', 'AUD', 'NZD', 'MXN', 'SGD', 'HKD', 'TWD', 'ARS', 'CLP']) assert.ok(dollars.includes(code), code);
+    for (const code of dollars) assert.ok(code === 'USD' || intlSymbols(code).includes('$'), code);
+    assert.deepEqual(symbolCurrencies('¥'), ['JPY', 'CNY']);
+    assert.deepEqual(symbolCurrencies('kr'), ['DKK', 'ISK', 'NOK', 'SEK']);
+    assert.deepEqual(symbolCurrencies('kr.'), symbolCurrencies('kr'));
+    assert.ok(symbolCurrencies('Rs.').includes('INR') && symbolCurrencies('Rs').includes('PKR'));
+    assert.deepEqual(symbolCurrencies('₨').sort(), ['INR', 'LKR', 'MUR', 'NPR', 'PKR', 'SCR']);
+    assert.deepEqual(symbolCurrencies('?'), []);
+  });
+});
+
+describe('currencyDigits', () => {
+  it('is the decimals the engine shows', () => {
+    assert.equal(currencyDigits('USD'), 2);
+    assert.equal(currencyDigits('JPY'), 0);
+    assert.equal(currencyDigits('KRW'), 0);
+    assert.equal(currencyDigits('KWD'), 3);
+    assert.equal(currencyDigits('nope'), 2);
+  });
+});
+
+describe('findPrices', () => {
+  /**
+   * The prices found, short: [text, code, amount, max?].
+   *
+   * @param {string} text - The text.
+   * @param {import('../src/index.js').FindOptions} [options] - Options.
+   * @returns {unknown[][]} One row per price.
+   */
+  const rows = (text, options) => findPrices(text, options).map((p) => (p.max === undefined ? [p.text, p.code, p.amount] : [p.text, p.code, p.amount, p.max]));
+  /** Settles "kr" as Danish crowns and "Rs." as rupees, as a Danish or Indian page would. */
+  const page = { pick: (/** @type {string} */ marker, /** @type {string[]} */ codes) => (codes.length === 1 ? codes[0] : marker.startsWith('kr') ? 'DKK' : marker.startsWith('Rs') ? 'INR' : codes[0]) };
+
+  /** @type {[string, unknown[][], import('../src/index.js').FindOptions?][]} */
+  const cases = [
+    ['$1,299.99', [['$1,299.99', 'USD', 1299.99]]],
+    ['1.299,99 €', [['1.299,99 €', 'EUR', 1299.99]]],
+    ['€1.299,99', [['€1.299,99', 'EUR', 1299.99]]],
+    ['£12', [['£12', 'GBP', 12]]],
+    ['US$5', [['US$5', 'USD', 5]]],
+    ['CA$5', [['CA$5', 'CAD', 5]]],
+    ['12,50 zł', [['12,50 zł', 'PLN', 12.5]]],
+    ['¥1,200', [['¥1,200', 'JPY', 1200]]],
+    ['R$ 10,00', [['R$ 10,00', 'BRL', 10]]],
+    ['CHF 12.–', [['CHF 12.–', 'CHF', 12]]],
+    ['ab 1.299,– €', [['1.299,– €', 'EUR', 1299]]],
+    ['1 234,56 kr', [['1 234,56 kr', 'DKK', 1234.56]], page],
+    ['kr. 1.299,00', [['kr. 1.299,00', 'DKK', 1299]], page],
+    ['₹1,23,456', [['₹1,23,456', 'INR', 123456]]],
+    ['Rs. 499', [['Rs. 499', 'INR', 499]], page],
+    ['12.99 USD', [['12.99 USD', 'USD', 12.99]]],
+    ['From $49.99', [['$49.99', 'USD', 49.99]]],
+    ['Was $59.99, now $49.99', [['$59.99', 'USD', 59.99], ['$49.99', 'USD', 49.99]]],
+    ['$49.99 – $59.99', [['$49.99 – $59.99', 'USD', 49.99, 59.99]]],
+    ['$10–20', [['$10–20', 'USD', 10, 20]]],
+    ['10–20 €', [['10–20 €', 'EUR', 10, 20]]],
+    ['£10 to £20', [['£10 to £20', 'GBP', 10, 20]]],
+    ['$9.99/mo', [['$9.99', 'USD', 9.99]]],
+    ['$12.99 CAD', [['$12.99 CAD', 'CAD', 12.99]]],
+    ['12.99 CAD', [['12.99 CAD', 'CAD', 12.99]]],
+    ['€1.299', [['€1.299', 'EUR', 1299]]],
+    ['$1,500', [['$1,500', 'USD', 1500]]],
+    ['1,500 €', [['1,500 €', 'EUR', 1500]], { locale: 'de' }],
+    ['KWD 1.500', [['KWD 1.500', 'KWD', 1.5]]],
+  ];
+  for (const [text, expected, options] of cases) {
+    it(`finds ${text}`, () => assert.deepEqual(rows(text, options), expected));
+  }
+
+  it('finds nothing in numbers without a marker, words or codes that are words', () => {
+    for (const text of ['2026', 'Call 555-1234', '20% off', 'Model X200', 'TOP 10', 'SHOP ALL 50', 'CAD 3D', 'TRY 3 FREE', '$5k', '12 USDT', '4.5 stars', '128 GB', 'A$', 'abc$5']) {
+      assert.deepEqual(rows(text), [], text);
+    }
+    for (const code of WORD_CODES) assert.deepEqual(rows(`${code} 12`), [], code);
+  });
+
+  it('leaves a shared letter marker unsettled by default, and gives its every reading', () => {
+    const [price] = findPrices('299 kr');
+    assert.equal(price.code, null);
+    assert.deepEqual(price.codes, ['DKK', 'ISK', 'NOK', 'SEK']);
+    assert.ok(SHARED_LETTER_MARKERS.includes('kr.'));
+  });
+
+  it('gives the marker, its place and the text as written', () => {
+    const text = 'Now only 1.299,99 € incl. VAT';
+    const [price] = findPrices(text, { locale: 'de' });
+    assert.equal(price.marker, '€');
+    assert.equal(text.slice(price.start, price.end), '1.299,99 €');
   });
 });

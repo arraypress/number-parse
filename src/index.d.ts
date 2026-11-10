@@ -165,8 +165,9 @@ export declare function symbolCurrency(symbol: string, reader?: CurrencyReader):
 /**
  * Price prefixes and suffixes as shops write them, where the engine's
  * symbols disagree or have none: "C$" is Nicaragua's to `Intl` and Canada's
- * to shops; "zł", "Kč" and "Ft" are letters, too risky in running text but
- * plain next to a price.
+ * to shops; "zł", "Kč", "Ft", "RM" (Malaysia), "Rp" (Indonesia), "lei"
+ * (Romania), "TL" (Turkey), "S/" (Peru) and "Fr." (Switzerland) are
+ * letters, too risky in running text but plain next to a price.
  *
  * @type {ReadonlyArray<readonly [string, string]>}
  */
@@ -240,3 +241,121 @@ export type Price = {
  * parsePrice('(US$12.50)', { display: true }); // { amount: -12.5, code: 'USD' }
  */
 export declare function parsePrice(text: string, { locale, decimal, knows, reader, display }?: PriceOptions): Price | null;
+/**
+ * Markers in letters that several currencies write, which pages put next to
+ * prices: "kr" (the Swedish, Norwegian, Danish and Icelandic crowns; "kr."
+ * in Danish) and "Rs" (the rupees of India, Pakistan, Sri Lanka, Nepal and
+ * Mauritius). Only the page can say which; {@link findPrices} reads them,
+ * {@link parsePrice} doesn't.
+ */
+export declare const SHARED_LETTER_MARKERS: readonly string[];
+/**
+ * ISO 4217 codes that are also English words in capitals ("SHOP ALL 50",
+ * "TOP 10", "TRY 3 FREE", "CAD 3D", "2 CUP"): {@link findPrices} doesn't take
+ * them as currencies unless told to, except the Canadian dollar and the
+ * Turkish lira after a number ("12.99 CAD"), where they're never words.
+ */
+export declare const WORD_CODES: readonly string[];
+/**
+ * Every currency a marker can stand for: one for a shop marker ("US$") or a
+ * symbol only one currency writes ("€"); several for a shared one ("$",
+ * "¥", "kr", "Rs", "₨"), the usual reading first ("$": USD, then the rest
+ * alphabetically). From the engine's own currency data.
+ *
+ * @param {string} marker - A symbol or shop marker as written: "$", "kr.", "CA$".
+ * @returns {string[]} ISO codes; empty for a marker no currency writes.
+ * @example
+ * symbolCurrencies('kr'); // ['DKK', 'ISK', 'NOK', 'SEK']
+ * symbolCurrencies('¥'); // ['JPY', 'CNY']
+ * symbolCurrencies('CA$'); // ['CAD']
+ */
+export declare function symbolCurrencies(marker: string): string[];
+/**
+ * How many decimals a currency's prices show, from the engine's currency
+ * data: 2 for most, 0 for the yen or the won, 3 for the Kuwaiti dinar.
+ *
+ * @param {string} code - An ISO 4217 code.
+ * @returns {number} The decimals; 2 for a code the engine doesn't know.
+ * @example
+ * currencyDigits('JPY'); // 0
+ * currencyDigits('KWD'); // 3
+ */
+export declare function currencyDigits(code: string): number;
+export type FoundPrice = {
+    /**
+     * Where it starts in the text.
+     */
+    start: number;
+    /**
+     * Where it ends (exclusive): `text.slice(start, end)` is it.
+     */
+    end: number;
+    /**
+     * It, as written: "$49.99", "1.299,99 €", "$10–20".
+     */
+    text: string;
+    /**
+     * Its currency marker, as written: "$", "€", "kr", "USD".
+     */
+    marker: string;
+    /**
+     * Every currency the marker can stand for ({@link symbolCurrencies}).
+     */
+    codes: string[];
+    /**
+     * The currency chosen (`pick`); null when nothing could say.
+     */
+    code: string | null;
+    /**
+     * The amount (the low end of a range).
+     */
+    amount: number;
+    /**
+     * A range's high end ("$49.99 – $59.99", "$10–20", "10–20 €").
+     */
+    max?: number;
+};
+export type FindOptions = {
+    /**
+     * The text's locale, for a number that reads either way and whose
+     * currency can't say (see {@link findPrices}). Default "en".
+     */
+    locale?: string;
+    /**
+     * The decimal mark itself; wins over `locale`.
+     */
+    decimal?: DecimalMark;
+    /**
+     * Whether a three-letter
+     * code counts as a currency, before the number or after it. Default: any ISO 4217 code but the
+     * {@link WORD_CODES} (the Canadian dollar and the Turkish lira count after a number).
+     */
+    knows?: (code: string, place: 'before' | 'after') => boolean;
+    /**
+     * Which currency a marker
+     * stands for. Default: the one there is; for a shared symbol its usual reading ("$" USD, "£"
+     * GBP, "¥" JPY, "₩" KRW), and null for "kr", "Rs" and "₨".
+     */
+    pick?: (marker: string, codes: string[]) => string | null;
+};
+/**
+ * Every price in a run of text, as a shop page writes it: "From $49.99",
+ * "1.299,99 € inkl. MwSt.", "Was £60, now £45", "$10–20", "CHF 12.–",
+ * "1 234,56 kr", "₹1,23,456", "12.99 USD". A currency marker (symbol, shop
+ * marker, shared letter marker or ISO code) before or after a shown number;
+ * a number with no marker is never a price, so years, phone numbers, model
+ * numbers and percentages are left alone.
+ *
+ * Shared markers ("$", "¥", "kr") are the caller's to settle (`pick`): a
+ * page can say whose dollars it means.
+ *
+ * @param {string} text - The text.
+ * @param {FindOptions} [options] - The locale, which codes count, and who decides shared markers.
+ * @returns {FoundPrice[]} The prices, in order (ranges as one).
+ * @example
+ * findPrices('Was $59.99, now $49.99');
+ * // [{ start: 4, end: 10, text: '$59.99', marker: '$', codes: ['USD', …], code: 'USD', amount: 59.99 }, { …, amount: 49.99 }]
+ * findPrices('ab 1.299,– €', { pick: () => 'EUR' })[0].amount; // 1299
+ * findPrices('12 kr', { pick: (marker, codes) => (codes.includes('SEK') ? 'SEK' : null) })[0].code; // 'SEK'
+ */
+export declare function findPrices(text: string, { locale, decimal, knows, pick }?: FindOptions): FoundPrice[];

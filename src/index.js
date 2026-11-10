@@ -317,6 +317,31 @@ export const RUPEE_SIGN = '₨';
 /** @type {Readonly<Record<string, string>>} */
 const RUPEE_BY_REGION = Object.freeze({ PK: 'PKR', LK: 'LKR', NP: 'NPR', MU: 'MUR', SC: 'SCR', IN: 'INR' });
 
+/** @type {Map<string, Set<string>> | null} */
+let ownerTable = null;
+
+/**
+ * Every symbol the engine's English currency data gives, letters included
+ * ("kr", "Rs", "lei"), with every currency that writes it. Built once.
+ *
+ * @returns {ReadonlyMap<string, ReadonlySet<string>>} Symbol → ISO codes.
+ */
+function symbolOwners() {
+  if (ownerTable) return ownerTable;
+  /** @type {Map<string, Set<string>>} */
+  const owners = new Map();
+  for (const code of ISO_CURRENCIES) {
+    for (const symbol of symbolsOf(code)) {
+      if (/\s/.test(symbol)) continue;
+      const codes = owners.get(symbol) ?? new Set();
+      codes.add(code);
+      owners.set(symbol, codes);
+    }
+  }
+  ownerTable = owners;
+  return owners;
+}
+
 /** @type {Map<string, string> | null} */
 let symbolTable = null;
 
@@ -332,19 +357,9 @@ let symbolTable = null;
  */
 export function currencySymbols() {
   if (symbolTable) return symbolTable;
-  /** @type {Map<string, Set<string>>} */
-  const owners = new Map();
-  for (const code of ISO_CURRENCIES) {
-    for (const symbol of symbolsOf(code)) {
-      if (!/\p{Sc}/u.test(symbol) || /\s/.test(symbol)) continue;
-      const codes = owners.get(symbol) ?? new Set();
-      codes.add(code);
-      owners.set(symbol, codes);
-    }
-  }
   /** @type {Map<string, string>} */
   const table = new Map();
-  for (const [symbol, codes] of owners) if (codes.size === 1) table.set(symbol, [...codes][0]);
+  for (const [symbol, codes] of symbolOwners()) if (codes.size === 1 && /\p{Sc}/u.test(symbol)) table.set(symbol, [...codes][0]);
   for (const [symbol, code] of Object.entries(SHARED_SYMBOLS)) table.set(symbol, code);
   symbolTable = table;
   return table;
@@ -384,15 +399,17 @@ export function symbolCurrency(symbol, reader) {
 /**
  * Price prefixes and suffixes as shops write them, where the engine's
  * symbols disagree or have none: "C$" is Nicaragua's to `Intl` and Canada's
- * to shops; "zł", "Kč" and "Ft" are letters, too risky in running text but
- * plain next to a price.
+ * to shops; "zł", "Kč", "Ft", "RM" (Malaysia), "Rp" (Indonesia), "lei"
+ * (Romania), "TL" (Turkey), "S/" (Peru) and "Fr." (Switzerland) are
+ * letters, too risky in running text but plain next to a price.
  *
  * @type {ReadonlyArray<readonly [string, string]>}
  */
 export const SHOP_MARKERS = Object.freeze([
   ['US$', 'USD'], ['CA$', 'CAD'], ['C$', 'CAD'], ['AU$', 'AUD'], ['A$', 'AUD'], ['NZ$', 'NZD'],
   ['HK$', 'HKD'], ['S$', 'SGD'], ['R$', 'BRL'], ['MX$', 'MXN'], ['CHF', 'CHF'], ['zł', 'PLN'],
-  ['Kč', 'CZK'], ['Ft', 'HUF'],
+  ['Kč', 'CZK'], ['Ft', 'HUF'], ['RM', 'MYR'], ['Rp', 'IDR'], ['lei', 'RON'], ['TL', 'TRY'],
+  ['S/', 'PEN'], ['Fr.', 'CHF'],
 ].map((pair) => Object.freeze(/** @type {const} */ ([pair[0], pair[1]]))));
 
 /** @typedef {readonly [string, string | null]} Marker A marker and its currency (null: the reader decides). */
@@ -477,4 +494,268 @@ export function parsePrice(text, { locale = 'en', decimal, knows = (code) => ISO
   const amount = display ? readNumber(digits, reading) : parseNumber(digits, reading);
   if (amount === null) return null;
   return { amount: peeled.negative && amount !== 0 ? -amount : amount, code };
+}
+
+// MARK: - Prices in text
+
+/**
+ * Markers in letters that several currencies write, which pages put next to
+ * prices: "kr" (the Swedish, Norwegian, Danish and Icelandic crowns; "kr."
+ * in Danish) and "Rs" (the rupees of India, Pakistan, Sri Lanka, Nepal and
+ * Mauritius). Only the page can say which; {@link findPrices} reads them,
+ * {@link parsePrice} doesn't.
+ */
+export const SHARED_LETTER_MARKERS = Object.freeze(['kr', 'kr.', 'Kr', 'Kr.', 'Rs', 'Rs.']);
+
+/** How the shared letter markers' other spellings are written in `Intl`. */
+const MARKER_SPELLINGS = Object.freeze(/** @type {Record<string, string>} */ ({ 'kr.': 'kr', Kr: 'kr', 'Kr.': 'kr', 'Rs.': 'Rs' }));
+
+/** Readings `Intl`'s English data leaves out: India writes "Rs." as often as "₹". */
+const MORE_OWNERS = Object.freeze(/** @type {Record<string, readonly string[]>} */ ({ Rs: ['INR'] }));
+
+/**
+ * ISO 4217 codes that are also English words in capitals ("SHOP ALL 50",
+ * "TOP 10", "TRY 3 FREE", "CAD 3D", "2 CUP"): {@link findPrices} doesn't take
+ * them as currencies unless told to, except the Canadian dollar and the
+ * Turkish lira after a number ("12.99 CAD"), where they're never words.
+ */
+export const WORD_CODES = Object.freeze(['ALL', 'BAM', 'BOB', 'BTN', 'CAD', 'CUP', 'GEL', 'MAD', 'MOP', 'PEN', 'SOS', 'TOP', 'TRY']);
+
+/** The {@link WORD_CODES} that are currencies after a number. */
+const CODES_AFTER_NUMBERS = Object.freeze(['CAD', 'TRY']);
+
+/**
+ * Whether a three-letter code is a currency where it's written.
+ *
+ * @param {string} code - e.g. "USD", "TOP".
+ * @param {'before' | 'after'} place - Before the number ("USD 12") or after it ("12 USD").
+ * @returns {boolean} True for an ISO 4217 code that isn't a word there.
+ */
+const isCurrencyCode = (code, place) => ISO_CURRENCIES.has(code)
+  && (!WORD_CODES.includes(code) || (place === 'after' && CODES_AFTER_NUMBERS.includes(code)));
+
+/**
+ * Every currency a marker can stand for: one for a shop marker ("US$") or a
+ * symbol only one currency writes ("€"); several for a shared one ("$",
+ * "¥", "kr", "Rs", "₨"), the usual reading first ("$": USD, then the rest
+ * alphabetically). From the engine's own currency data.
+ *
+ * @param {string} marker - A symbol or shop marker as written: "$", "kr.", "CA$".
+ * @returns {string[]} ISO codes; empty for a marker no currency writes.
+ * @example
+ * symbolCurrencies('kr'); // ['DKK', 'ISK', 'NOK', 'SEK']
+ * symbolCurrencies('¥'); // ['JPY', 'CNY']
+ * symbolCurrencies('CA$'); // ['CAD']
+ */
+export function symbolCurrencies(marker) {
+  const shop = SHOP_MARKERS.find(([m]) => m === marker);
+  if (shop) return [shop[1]];
+  if (marker === RUPEE_SIGN) return [...new Set(Object.values(RUPEE_BY_REGION))];
+  const symbol = MARKER_SPELLINGS[marker] ?? marker;
+  const owners = new Set([...(symbolOwners().get(symbol) ?? []), ...(MORE_OWNERS[symbol] ?? [])]);
+  const usual = SHARED_SYMBOLS[symbol];
+  const rest = [...owners].filter((code) => code !== usual).sort();
+  return usual ? [usual, ...rest] : rest;
+}
+
+/** @type {Map<string, number>} */
+const digitsCache = new Map();
+
+/**
+ * How many decimals a currency's prices show, from the engine's currency
+ * data: 2 for most, 0 for the yen or the won, 3 for the Kuwaiti dinar.
+ *
+ * @param {string} code - An ISO 4217 code.
+ * @returns {number} The decimals; 2 for a code the engine doesn't know.
+ * @example
+ * currencyDigits('JPY'); // 0
+ * currencyDigits('KWD'); // 3
+ */
+export function currencyDigits(code) {
+  const known = digitsCache.get(code);
+  if (known !== undefined) return known;
+  let digits = 2;
+  try {
+    digits = new Intl.NumberFormat('en', { style: 'currency', currency: code }).resolvedOptions().maximumFractionDigits ?? 2;
+  } catch {
+    // Not a currency the engine knows.
+  }
+  digitsCache.set(code, digits);
+  return digits;
+}
+
+/**
+ * A price found in text.
+ *
+ * @typedef {object} FoundPrice
+ * @property {number} start Where it starts in the text.
+ * @property {number} end Where it ends (exclusive): `text.slice(start, end)` is it.
+ * @property {string} text It, as written: "$49.99", "1.299,99 €", "$10–20".
+ * @property {string} marker Its currency marker, as written: "$", "€", "kr", "USD".
+ * @property {string[]} codes Every currency the marker can stand for ({@link symbolCurrencies}).
+ * @property {string | null} code The currency chosen (`pick`); null when nothing could say.
+ * @property {number} amount The amount (the low end of a range).
+ * @property {number} [max] A range's high end ("$49.99 – $59.99", "$10–20", "10–20 €").
+ */
+
+/**
+ * How to read prices in text.
+ *
+ * @typedef {object} FindOptions
+ * @property {string} [locale] The text's locale, for a number that reads either way and whose
+ *   currency can't say (see {@link findPrices}). Default "en".
+ * @property {DecimalMark} [decimal] The decimal mark itself; wins over `locale`.
+ * @property {(code: string, place: 'before' | 'after') => boolean} [knows] Whether a three-letter
+ *   code counts as a currency, before the number or after it. Default: any ISO 4217 code but the
+ *   {@link WORD_CODES} (the Canadian dollar and the Turkish lira count after a number).
+ * @property {(marker: string, codes: string[]) => string | null} [pick] Which currency a marker
+ *   stands for. Default: the one there is; for a shared symbol its usual reading ("$" USD, "£"
+ *   GBP, "¥" JPY, "₩" KRW), and null for "kr", "Rs" and "₨".
+ */
+
+/** @type {{pattern: RegExp, number: string} | null} */
+let textGrammar = null;
+
+/**
+ * The pattern for prices in running text: a marker before or after a shown
+ * number ({@link DISPLAY_NUMBER_SOURCE}, or one ending "–" for no cents:
+ * "12.–", "12,-"), with at most one space between, and neither part inside a
+ * longer word or number. Built once.
+ *
+ * @returns {{pattern: RegExp, number: string}} The pattern (global) and the number's source.
+ */
+function inText() {
+  if (textGrammar) return textGrammar;
+  const markers = [...prices().markers.map(([m]) => m), ...SHARED_LETTER_MARKERS].sort((a, b) => b.length - a.length);
+  const marker = `${markers.map(escapeRegExp).join('|')}|[A-Z]{3}`;
+  const number = `(?:${DISPLAY_NUMBER_SOURCE})(?:[.,](?:--?|–|—))?`;
+  const space = '[ \\u00A0\\u202F\\u2009]?';
+  const edge = '(?![\\p{L}\\p{N}]|[.,]\\p{N})';
+  textGrammar = {
+    pattern: new RegExp(`(?<![\\p{L}\\p{N}])(?:(${marker})${space}(${number})${edge}|(${number})${space}(${marker})(?![\\p{L}\\p{N}]))`, 'gu'),
+    number,
+  };
+  return textGrammar;
+}
+
+/**
+ * A shown number's value as a price: a number that reads either way
+ * ("1,500", "1.299") groups thousands when the currency has fewer than three
+ * decimals (a price of "1,500" US dollars is fifteen hundred, whatever the
+ * page's language); otherwise the locale decides. A "–" for the cents is ".00".
+ *
+ * @param {string} digits - The number as written: "1.299,99", "12.–".
+ * @param {string | null} code - The currency, if known.
+ * @param {DecimalMark} decimal - The text's decimal mark.
+ * @returns {number | null} The amount.
+ */
+function priceAmount(digits, code, decimal) {
+  const plain = digits.replace(/[.,](?:--?|–|—)$/, '');
+  const reading = decimalMarkOf(plain) === null && /[.,]\d{3}$/.test(plain) && code && currencyDigits(code) < 3
+    ? { decimal: /** @type {DecimalMark} */ (plain.includes(',') ? '.' : ',') } : { decimal };
+  return readNumber(plain, reading);
+}
+
+/**
+ * The usual reading of a marker.
+ *
+ * @param {string} marker - As written.
+ * @param {string[]} codes - Its currencies.
+ * @returns {string | null} The one there is, a shared symbol's usual one, or null.
+ */
+const usualPick = (marker, codes) => (codes.length === 1 ? codes[0] : SHARED_SYMBOLS[marker] ?? null);
+
+/** A currency code just after a price: "$12.99 CAD". */
+const TRAILING_CODE = /^[ \u00A0\u202F\u2009]?([A-Z]{3})(?![\p{L}\p{N}])/u;
+
+/** Words and dashes between the two ends of a range. */
+const RANGE_GAP = /^\s*(?:[-–—]|to|bis|à|a|até|tot|till|〜|~)\s*$/i;
+
+/**
+ * Join prices that make a range: "$49.99 – $59.99", "$10–20", "10–20 €".
+ *
+ * @param {string} text - The text.
+ * @param {FoundPrice[]} found - Its prices, in order.
+ * @param {(digits: string, code: string | null) => number | null} amountOf - Reads a bare number in a price's currency.
+ * @returns {FoundPrice[]} The prices, ranges joined.
+ */
+function joinRanges(text, found, amountOf) {
+  const { number } = inText();
+  const bareAfter = new RegExp(`^\\s?[-–—]\\s?(${number})(?![\\p{L}\\p{N}]|[.,]\\p{N})`, 'u');
+  const bareBefore = new RegExp(`(?<![\\p{L}\\p{N}.,])(${number})\\s?[-–—]\\s?$`, 'u');
+  /** @type {FoundPrice[]} */
+  const joined = [];
+  for (const price of found) {
+    const last = joined.at(-1);
+    if (last && last.max === undefined && last.code === price.code && price.amount > last.amount && RANGE_GAP.test(text.slice(last.end, price.start))) {
+      Object.assign(last, { end: price.end, text: text.slice(last.start, price.end), max: price.amount });
+      continue;
+    }
+    const markerFirst = text.startsWith(price.marker, price.start);
+    if (markerFirst) {
+      const after = bareAfter.exec(text.slice(price.end));
+      const max = after && amountOf(after[1], price.code);
+      if (after && max !== null && max > price.amount) {
+        price.end += after[0].length;
+        price.text = text.slice(price.start, price.end);
+        price.max = max;
+      }
+    } else {
+      const before = bareBefore.exec(text.slice(last?.end ?? 0, price.start));
+      const min = before && amountOf(before[1], price.code);
+      if (before && min !== null && min < price.amount) {
+        price.start -= before[0].length;
+        price.text = text.slice(price.start, price.end);
+        price.max = price.amount;
+        price.amount = min;
+      }
+    }
+    joined.push(price);
+  }
+  return joined;
+}
+
+/**
+ * Every price in a run of text, as a shop page writes it: "From $49.99",
+ * "1.299,99 € inkl. MwSt.", "Was £60, now £45", "$10–20", "CHF 12.–",
+ * "1 234,56 kr", "₹1,23,456", "12.99 USD". A currency marker (symbol, shop
+ * marker, shared letter marker or ISO code) before or after a shown number;
+ * a number with no marker is never a price, so years, phone numbers, model
+ * numbers and percentages are left alone.
+ *
+ * Shared markers ("$", "¥", "kr") are the caller's to settle (`pick`): a
+ * page can say whose dollars it means.
+ *
+ * @param {string} text - The text.
+ * @param {FindOptions} [options] - The locale, which codes count, and who decides shared markers.
+ * @returns {FoundPrice[]} The prices, in order (ranges as one).
+ * @example
+ * findPrices('Was $59.99, now $49.99');
+ * // [{ start: 4, end: 10, text: '$59.99', marker: '$', codes: ['USD', …], code: 'USD', amount: 59.99 }, { …, amount: 49.99 }]
+ * findPrices('ab 1.299,– €', { pick: () => 'EUR' })[0].amount; // 1299
+ * findPrices('12 kr', { pick: (marker, codes) => (codes.includes('SEK') ? 'SEK' : null) })[0].code; // 'SEK'
+ */
+export function findPrices(text, { locale = 'en', decimal, knows = isCurrencyCode, pick = usualPick } = {}) {
+  const mark = decimal ?? decimalSeparator(locale);
+  /** @param {string} digits @param {string | null} code @returns {number | null} */
+  const amountOf = (digits, code) => priceAmount(digits, code, mark);
+  /** @type {FoundPrice[]} */
+  const found = [];
+  for (const match of text.matchAll(inText().pattern)) {
+    const marker = match[1] ?? match[4];
+    const digits = match[2] ?? match[3];
+    const isCode = /^[A-Z]{3}$/.test(marker) && !SHOP_MARKERS.some(([m]) => m === marker);
+    if (isCode && !knows(marker, match[1] ? 'before' : 'after')) continue;
+    const codes = isCode ? [marker] : symbolCurrencies(marker);
+    if (!codes.length) continue;
+    let end = match.index + match[0].length;
+    // "$12.99 CAD": a code after a shared symbol's price says whose it is.
+    const named = codes.length > 1 && match[1] ? TRAILING_CODE.exec(text.slice(end)) : null;
+    const code = named && codes.includes(named[1]) ? named[1] : pick(marker, codes);
+    if (named && code === named[1]) end += named[0].length;
+    const amount = amountOf(digits, code);
+    if (amount === null) continue;
+    found.push({ start: match.index, end, text: text.slice(match.index, end), marker, codes, code, amount });
+  }
+  return joinRanges(text, found, amountOf);
 }
