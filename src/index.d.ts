@@ -252,6 +252,11 @@ export declare function parsePrice(text: string, { locale, decimal, knows, reade
  */
 export declare const SHARED_MARKERS: readonly string[];
 /**
+ * Signs of a currency's hundredth, with the currency sign whose currencies
+ * they divide: "74.8¢/oz" is 74.8 hundredths of the page's dollar.
+ */
+export declare const SUBUNIT_MARKERS: Readonly<Record<string, string>>;
+/**
  * ISO 4217 codes that are also English words in capitals ("SHOP ALL 50",
  * "TOP 10", "TRY 3 FREE", "CAD 3D", "2 CUP"): {@link findPrices} doesn't take
  * them as currencies unless told to, except the Canadian dollar and the
@@ -343,7 +348,7 @@ export type FindOptions = {
 /**
  * Every price in a run of text, as a shop page writes it: "From $49.99",
  * "1.299,99 € inkl. MwSt.", "Was £60, now £45", "$10–20", "CHF 12.–",
- * "1 234,56 kr", "₹1,23,456", "12.99 USD". A currency marker (symbol, shop
+ * "1 234,56 kr", "₹1,23,456", "12.99 USD", "74.8¢/oz" (0.748 of the dollar). A currency marker (symbol, shop
  * marker, shared letter marker or ISO code) before or after a shown number;
  * a number with no marker is never a price, so years, phone numbers, model
  * numbers and percentages are left alone.

@@ -509,6 +509,12 @@ export function parsePrice(text, { locale = 'en', decimal, knows = (code) => ISO
  */
 export const SHARED_MARKERS = Object.freeze(['kr', 'kr.', 'Kr', 'Kr.', 'Rs', 'Rs.', '￥']);
 
+/**
+ * Signs of a currency's hundredth, with the currency sign whose currencies
+ * they divide: "74.8¢/oz" is 74.8 hundredths of the page's dollar.
+ */
+export const SUBUNIT_MARKERS = Object.freeze(/** @type {Record<string, string>} */ ({ '¢': '$' }));
+
 /** How the shared markers' other spellings are written in `Intl`. */
 const MARKER_SPELLINGS = Object.freeze(/** @type {Record<string, string>} */ ({ 'kr.': 'kr', Kr: 'kr', 'Kr.': 'kr', 'Rs.': 'Rs', '￥': '¥' }));
 
@@ -636,7 +642,7 @@ let textGrammar = null;
  */
 function inText() {
   if (textGrammar) return textGrammar;
-  const markers = [...prices().markers.map(([m]) => m), ...SHARED_MARKERS].sort((a, b) => b.length - a.length);
+  const markers = [...prices().markers.map(([m]) => m), ...SHARED_MARKERS, ...Object.keys(SUBUNIT_MARKERS)].sort((a, b) => b.length - a.length);
   const marker = `${markers.map(escapeRegExp).join('|')}|[A-Z]{3}`;
   const number = `(?:${DISPLAY_NUMBER_SOURCE})(?:[.,](?:--?|–|—))?`;
   const space = '[ \\u00A0\\u202F\\u2009]?';
@@ -673,7 +679,7 @@ function priceAmount(digits, code, decimal) {
  * @param {string[]} codes - Its currencies.
  * @returns {string | null} The one there is, a shared symbol's usual one, or null.
  */
-const usualPick = (marker, codes) => (codes.length === 1 ? codes[0] : SHARED_SYMBOLS[MARKER_SPELLINGS[marker] ?? marker] ?? null);
+const usualPick = (marker, codes) => (codes.length === 1 ? codes[0] : SHARED_SYMBOLS[SUBUNIT_MARKERS[marker] ?? MARKER_SPELLINGS[marker] ?? marker] ?? null);
 
 /** A currency code just after a price: "$12.99 CAD". */
 const TRAILING_CODE = /^[ \u00A0\u202F\u2009]?([A-Z]{3})(?![\p{L}\p{N}])/u;
@@ -731,7 +737,7 @@ function joinRanges(text, found, amountOf) {
 /**
  * Every price in a run of text, as a shop page writes it: "From $49.99",
  * "1.299,99 € inkl. MwSt.", "Was £60, now £45", "$10–20", "CHF 12.–",
- * "1 234,56 kr", "₹1,23,456", "12.99 USD". A currency marker (symbol, shop
+ * "1 234,56 kr", "₹1,23,456", "12.99 USD", "74.8¢/oz" (0.748 of the dollar). A currency marker (symbol, shop
  * marker, shared letter marker or ISO code) before or after a shown number;
  * a number with no marker is never a price, so years, phone numbers, model
  * numbers and percentages are left alone.
@@ -760,12 +766,15 @@ export function findPrices(text, { locale = 'en', decimal, knows = isCurrencyCod
     const marker = match[1] ?? match[4];
     const digits = match[2] ?? match[3];
     const isCode = /^[A-Z]{3}$/.test(marker) && !SHOP_MARKERS.some(([m]) => m === marker);
-    if (isCode && !knows(marker, match[1] ? 'before' : 'after')) {
+    // A code runs into the number after it only in names ("USD1", a coin; "EUR5" a model): a price spaces it.
+    const glued = isCode && match[1] && !/\s/.test(text.charAt(match.index + marker.length));
+    if (isCode && (glued || !knows(marker, match[1] ? 'before' : 'after'))) {
       // "UVP 129,99 €": the word isn't a currency, but what follows it may be a price.
       if (match[1]) pattern.lastIndex = match.index + marker.length;
       continue;
     }
-    const codes = isCode ? [marker] : symbolCurrencies(marker);
+    const subunit = SUBUNIT_MARKERS[marker];
+    const codes = isCode ? [marker] : symbolCurrencies(subunit ?? marker);
     if (!codes.length) continue;
     let start = match.index;
     let end = start + match[0].length;
@@ -780,8 +789,9 @@ export function findPrices(text, { locale = 'en', decimal, knows = isCurrencyCod
       code = leading[1];
       start -= leading[0].length;
     }
-    const amount = amountOf(digits, code);
-    if (amount === null) continue;
+    const whole = amountOf(digits, code);
+    if (whole === null) continue;
+    const amount = subunit ? Math.round(whole * 1e4) / 1e6 : whole;
     found.push({ start, end, text: text.slice(start, end), marker, codes, code, amount });
   }
   return joinRanges(text, found, amountOf);

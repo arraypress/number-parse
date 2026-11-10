@@ -8,7 +8,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  currencyDigits, currencySymbols, decimalMarkOf, decimalSeparator, DISPLAY_NUMBER_SOURCE, ECB_CURRENCIES, findPrices,
+  SUBUNIT_MARKERS, currencyDigits, currencySymbols, decimalMarkOf, decimalSeparator, DISPLAY_NUMBER_SOURCE, ECB_CURRENCIES, findPrices,
   ISO_CURRENCIES, NUMBER_SOURCE, parseNumber, parsePrice, readNumber, RUPEE_SIGN, SHARED_MARKERS, SHOP_MARKERS,
   symbolCharacters, symbolCurrencies, symbolCurrency, WORD_CODES,
 } from '../src/index.js';
@@ -306,16 +306,19 @@ describe('findPrices', () => {
     ['価格￥1,200', [['￥1,200', 'JPY', 1200]]],
     ['88元', [['88元', 'CNY', 88]]],
     ['15,000원', [['15,000원', 'KRW', 15000]]],
+    ['74.8 ¢/oz', [['74.8 ¢', 'USD', 0.748]]],
+    ['99¢', [['99¢', 'USD', 0.99]]],
   ];
   for (const [text, expected, options] of cases) {
     it(`finds ${text}`, () => assert.deepEqual(rows(text, options), expected));
   }
 
   it('finds nothing in numbers without a marker, words or codes that are words', () => {
-    for (const text of ['2026', 'Call 555-1234', '20% off', 'Model X200', 'TOP 10', 'SHOP ALL 50', 'CAD 3D', 'TRY 3 FREE', '$5k', '12 USDT', '4.5 stars', '128 GB', 'A$', 'abc$5']) {
+    for (const text of ['USD1 stablecoin', 'EUR5 bond', 'GBP2 class', '2026', 'Call 555-1234', '20% off', 'Model X200', 'TOP 10', 'SHOP ALL 50', 'CAD 3D', 'TRY 3 FREE', '$5k', '12 USDT', '4.5 stars', '128 GB', 'A$', 'abc$5']) {
       assert.deepEqual(rows(text), [], text);
     }
     for (const code of WORD_CODES) assert.deepEqual(rows(`${code} 12`), [], code);
+    assert.deepEqual(Object.keys(SUBUNIT_MARKERS), ['¢']);
   });
 
   it('leaves a shared letter marker unsettled by default, and gives its every reading', () => {

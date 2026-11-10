@@ -91,6 +91,8 @@ findPrices('Was $59.99, now $49.99');
 findPrices('$49.99 – $59.99')[0];            // { …, amount: 49.99, max: 59.99 } (also "$10–20", "10–20 €")
 findPrices('CHF 12.–')[0].amount;             // 12 (also "12,- €")
 findPrices('$12.99 CAD')[0].code;             // 'CAD': a code after a shared symbol settles it
+findPrices('74.8¢/oz')[0].amount;             // 0.748: cents (SUBUNIT_MARKERS) of the page's dollar
+findPrices('USD1 stablecoin');                // []: a code runs into a number only in names
 findPrices('€1.299')[0].amount;               // 1299: a price with 3 digits after its only mark groups thousands
 findPrices('2026, 20% off, TOP 10, 555-1234'); // []: no marker, or a code that's a word ("TOP", "ALL")
 
