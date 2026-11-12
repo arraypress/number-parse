@@ -1,6 +1,6 @@
 {
   "name": "@arraypress/number-parse",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Read numbers and prices the way people type them and pages show them: locale decimal marks, thousands, Indian and apostrophe groups, signs and accounting parentheses, and currency symbols, codes and shop markers from Intl.",
   "type": "module",
   "main": "src/index.js",

@@ -5,6 +5,24 @@ All notable changes to `@arraypress/number-parse` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] — Unreleased
+
+### Added
+
+- `westernDigits(text)`: the digits of other scripts (Arabic-Indic, Persian, Devanagari, Bengali, Thai, full-width…) as "0"–"9", and the Arabic marks "٫" "٬" as "." ",". `parseNumber`, `readNumber`, `decimalMarkOf`, `parsePrice` and `findPrices` now read them ("١٬٢٣٤ SAR", "１,２００円"); a found price's `text` stays as written.
+- `NAMED_NUMBERS`: codes that name something else before certain numbers ("PHP 8.3", "COP 28", "RON 95", "SDG 13"), which `findPrices` no longer takes for prices. "AMD" joins `WORD_CODES` ("AMD 5600"; "5,600 AMD" is still a price).
+- `SHOP_MARKERS`: "S/." (PEN), "sFr." (CHF), "JP¥", "AR$", "Mex$", "RMB" (CNY), "đ" and "VNĐ" (VND), "руб" and "руб." (RUB), "грн" (UAH).
+
+### Fixed
+
+- A mark written more than once groups thousands whatever the locale: "1.500.000" read with "en" (and "1,500,000" with "de") was `null`, so `findPrices` found nothing in "Rp 1.500.000", "COP 1.500.000" or "₫1.200.000" on a page in English.
+- `findPrices`: a price that reads either way is a decimal when its mark is the decimal mark of both the page and the currency's own countries: "$3.459" a gallon is 3.459 (was 3459), "1,759 €" on a German page 1.759, "EUR/USD 1.085" 1.085. "€1.299" in English and "1,500 USD" in German still group thousands.
+- `findPrices`: a plain space after a prefixed price no longer joins the next three digits to it where the locale doesn't group with spaces ("Only $5 200 left" is $5, "$10 100% cotton" $10). No-break spaces, a decimal part ("€ 1 234,56") and a number before its marker ("2 500 €") read as before.
+- `findPrices`: "$1-800-555-1234" is no longer the range $1–800; "$5CAD" is found with its "$".
+- `readNumber`, `parsePrice`: parentheses with a minus inside are negative ("(-5)" was 5).
+- `parsePrice` with `display` reads a number that reads either way as `findPrices` does ("50.000₫" is 50000, was 50).
+- `NUMBER_SOURCE` takes the thin space `parseNumber` already stripped.
+
 ## [1.1.0] — Unreleased
 
 ### Added

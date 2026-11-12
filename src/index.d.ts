@@ -51,9 +51,25 @@ export type Reading = string | {
  */
 export declare function decimalSeparator(locale: string): DecimalMark;
 /**
+ * Text with the digits of other scripts written as "0" to "9": Arabic-Indic
+ * ("١٢٣"), Persian ("۱۲۳"), Devanagari ("१२३"), Bengali, Thai, full-width
+ * ("１２３") and the rest, with the Arabic decimal mark "٫" as "." and
+ * thousands mark "٬" as ",". Every character becomes one character, so a
+ * place in the result is the same place in the text. Every reader here
+ * ({@link parseNumber}, {@link readNumber}, {@link parsePrice},
+ * {@link findPrices}) does this first.
+ *
+ * @param {string} text - Any text.
+ * @returns {string} It with Western digits, the same length.
+ * @example
+ * westernDigits('١٬٢٣٤٫٥'); // '1,234.5'
+ * westernDigits('１２３円'); // '123円'
+ */
+export declare function westernDigits(text: string): string;
+/**
  * A typed number, as a regex source (no anchors, no groups that capture):
  * digits with thousands grouped in threes by ",", ".", a space, a no-break
- * space or a narrow no-break space, and an optional decimal part.
+ * space, a narrow no-break space or a thin space, and an optional decimal part.
  */
 export declare const NUMBER_SOURCE: string;
 /**
@@ -166,9 +182,11 @@ export declare function symbolCurrency(symbol: string, reader?: CurrencyReader):
  * Price prefixes and suffixes as shops write them, where the engine's
  * symbols disagree or have none: "C$" is Nicaragua's to `Intl` and Canada's
  * to shops; "zł", "Kč", "Ft", "RM" (Malaysia), "Rp" (Indonesia), "lei"
- * (Romania), "TL" (Turkey), "S/" (Peru), "Fr." (Switzerland) and the
- * characters for yen, yuan and won ("円", "元", "원") are letters, too risky
- * in running text but plain next to a price.
+ * (Romania), "TL" (Turkey), "S/" and "S/." (Peru), "Fr." and "sFr."
+ * (Switzerland), "đ" and "VNĐ" (Vietnam), "руб" (Russia), "грн" (Ukraine),
+ * "RMB" (China) and the characters for yen, yuan and won ("円", "元", "원")
+ * are letters, too risky in running text but plain next to a price; "JP¥",
+ * "AR$" and "Mex$" name whose yen or dollar it is.
  *
  * @type {ReadonlyArray<readonly [string, string]>}
  */
@@ -195,7 +213,8 @@ export type PriceOptions = {
     /**
      * Read the number as a page shows it ({@link readNumber}):
      * apostrophe and Indian groups, a sign or accounting parentheses ("-$5", "$-5",
-     * "(€12.50)"). Default false: a typed, unsigned number.
+     * "(€12.50)"), and a number that reads either way as {@link findPrices} reads it
+     * ("50.000 ₫" is fifty thousand). Default false: a typed, unsigned number.
      */
     display?: boolean;
 };
@@ -220,7 +239,8 @@ export type Price = {
  * @property {CurrencyReader} [reader] Whose rupee "₨" is.
  * @property {boolean} [display] Read the number as a page shows it ({@link readNumber}):
  *   apostrophe and Indian groups, a sign or accounting parentheses ("-$5", "$-5",
- *   "(€12.50)"). Default false: a typed, unsigned number.
+ *   "(€12.50)"), and a number that reads either way as {@link findPrices} reads it
+ *   ("50.000 ₫" is fifty thousand). Default false: a typed, unsigned number.
  */
 /**
  * A price's amount and currency.
@@ -257,12 +277,23 @@ export declare const SHARED_MARKERS: readonly string[];
  */
 export declare const SUBUNIT_MARKERS: Readonly<Record<string, string>>;
 /**
- * ISO 4217 codes that are also English words in capitals ("SHOP ALL 50",
- * "TOP 10", "TRY 3 FREE", "CAD 3D", "2 CUP"): {@link findPrices} doesn't take
- * them as currencies unless told to, except the Canadian dollar and the
- * Turkish lira after a number ("12.99 CAD"), where they're never words.
+ * ISO 4217 codes that are also English words or names in capitals ("SHOP ALL
+ * 50", "TOP 10", "TRY 3 FREE", "CAD 3D", "2 CUP", "AMD 5600"): {@link findPrices}
+ * doesn't take them as currencies unless told to, except the Canadian dollar,
+ * the Turkish lira and the Armenian dram after a number ("12.99 CAD"), where
+ * they're never words.
  */
 export declare const WORD_CODES: readonly string[];
+/**
+ * ISO 4217 codes that name something else before certain numbers, with the
+ * numbers: a version of PHP ("PHP 8.3"), a climate conference ("COP 28"), a
+ * petrol's octane ("RON 95"), a Sustainable Development Goal ("SDG 13").
+ * {@link findPrices} takes none of them as a price; the same code before any
+ * other number ("PHP 1,200", "COP 25.000", "RON 49,99") still is one.
+ *
+ * @type {Readonly<Record<string, RegExp>>}
+ */
+export declare const NAMED_NUMBERS: Readonly<Record<string, RegExp>>;
 /**
  * Every currency a marker can stand for: one for a shop marker ("US$") or a
  * symbol only one currency writes ("€"); several for a shared one ("$",

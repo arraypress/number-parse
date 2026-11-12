@@ -37,6 +37,8 @@ readNumber('12,34,567', 'en-IN');      // 1234567
 readNumber("1'234.56", 'de-CH');       // 1234.56
 readNumber('(1,200.50)', 'en');        // -1200.5
 readNumber('−5', 'en');                // -5
+readNumber('1.500.000', 'en');         // 1500000: a mark written twice can only group
+readNumber('١٬٢٣٤٫٥', 'en');           // 1234.5: digits of other scripts (westernDigits)
 
 // Many numbers (a table column): let the unambiguous ones choose the mark for the rest.
 decimalMarkOf('1.234,56');             // ','
@@ -51,6 +53,7 @@ decimalSeparator('fr');                // ','
 | `readNumber(text, reading)` | A shown number (`DISPLAY_NUMBER_SOURCE`) with an optional sign or parentheses, or `null`. |
 | `decimalMarkOf(text)` | The decimal mark a number can only have (`'.'`, `','`), or `null`. |
 | `decimalSeparator(locale)` | The locale's decimal mark. |
+| `westernDigits(text)` | The text with Arabic-Indic, Persian, Devanagari, Bengali, Thai, full-width… digits as `0`–`9` (and `٫` `٬` as `.` `,`), the same length. Every reader here does it first. |
 | `NUMBER_SOURCE`, `DISPLAY_NUMBER_SOURCE` | The two grammars as regex sources, without capturing groups, to embed in larger patterns. |
 
 ## Prices and currencies
@@ -71,11 +74,11 @@ symbolCurrency('₨', { region: 'PK' });        // 'PKR'
 
 | Export | What it does |
 |---|---|
-| `parsePrice(text, {locale, decimal, knows, reader, display})` | A marker (symbol, shop marker, ISO code) before or after a number → `{amount, code}`, or `null`. `knows` decides which three-letter codes count (default: any ISO 4217 code); `display` reads the number as `readNumber` does. |
+| `parsePrice(text, {locale, decimal, knows, reader, display})` | A marker (symbol, shop marker, ISO code) before or after a number → `{amount, code}`, or `null`. `knows` decides which three-letter codes count (default: any ISO 4217 code); `display` reads the number as `readNumber` does, and one that reads either way as `findPrices` does. |
 | `currencySymbols()` | Every symbol that names one currency in `Intl`'s English data, plus `$` USD, `£` GBP, `¥` JPY, `₩` KRW. Letter "symbols" (`kr`, `Rs`, `K`) are left out. Built once. |
 | `symbolCurrency(symbol, reader?)` | One symbol's currency; `₨` needs the reader's `home` or `region`. |
 | `symbolCharacters()` | The single-character symbols, for a regex class. |
-| `SHOP_MARKERS` | `US$`, `CA$`, `C$`, `A$`, `R$`, `CHF`, `zł`, `Kč`, `Ft`… with their codes. |
+| `SHOP_MARKERS` | `US$`, `CA$`, `C$`, `A$`, `R$`, `CHF`, `zł`, `Kč`, `Ft`, `S/.`, `JP¥`, `RMB`, `đ`, `руб`… with their codes. |
 | `ECB_CURRENCIES`, `ISO_CURRENCIES`, `RUPEE_SIGN` | The ECB's 30 codes; every code the engine formats; `₨`. |
 | `symbolCurrencies(marker)` | Every currency a marker can mean, the usual one first: `'$'` → USD, ARS, AUD, CAD…; `'kr'` → DKK, ISK, NOK, SEK; `'CA$'` → CAD. |
 | `currencyDigits(code)` | The decimals a currency's prices show (2; JPY 0; KWD 3). |
@@ -93,8 +96,12 @@ findPrices('CHF 12.–')[0].amount;             // 12 (also "12,- €")
 findPrices('$12.99 CAD')[0].code;             // 'CAD': a code after a shared symbol settles it
 findPrices('74.8¢/oz')[0].amount;             // 0.748: cents (SUBUNIT_MARKERS) of the page's dollar
 findPrices('USD1 stablecoin');                // []: a code runs into a number only in names
-findPrices('€1.299')[0].amount;               // 1299: a price with 3 digits after its only mark groups thousands
+findPrices('€1.299')[0].amount;               // 1299: a price with 3 digits after its only mark groups thousands…
+findPrices('Regular $3.459/gal')[0].amount;   // 3.459: …unless the page and the currency both write that mark for decimals
+findPrices('Rp 1.500.000')[0].amount;         // 1500000, whatever the page's language
+findPrices('Only $5 200 left')[0].amount;     // 5: a plain space groups thousands only where the locale's numbers do
 findPrices('2026, 20% off, TOP 10, 555-1234'); // []: no marker, or a code that's a word ("TOP", "ALL")
+findPrices('PHP 8.3, COP 28, RON 95');        // []: NAMED_NUMBERS ("PHP 1,200" is still a price)
 
 // Whose "$", "¥" or "kr" is it? The page says (its declared currency, its country…):
 findPrices('1 234,56 kr', { pick: (marker, codes) => (codes.includes('SEK') ? 'SEK' : null) });
@@ -106,7 +113,7 @@ number; digits and Latin, Greek or Cyrillic letters can't run into it, but Japan
 text can ("税込1,200円送料無料"). A code beside a shared symbol settles it ("$12.99 CAD",
 "AUD $49.95"); a capital word that isn't a currency doesn't hide the price after it ("UVP 129,99 €").
 Options: `locale`/`decimal` (for a number that reads either way when the currency can't
-say), `knows(code, place)` (default: ISO codes but `WORD_CODES`; CAD and TRY count after a number),
+say), `knows(code, place)` (default: ISO codes but `WORD_CODES`; CAD, TRY and AMD count after a number),
 and `pick(marker, codes)` (default: the one there is, or a shared symbol's usual reading; null for
 "kr", "Rs" and "₨").
 

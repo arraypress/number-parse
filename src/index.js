@@ -59,12 +59,46 @@ export function decimalSeparator(locale) {
   }
 }
 
+/** The zero of every decimal digit set in the Basic Multilingual Plane that pages write numbers in. */
+const DIGIT_ZEROS = Object.freeze([
+  0x0660, 0x06F0, 0x07C0, 0x0966, 0x09E6, 0x0A66, 0x0AE6, 0x0B66, 0x0BE6, 0x0C66, 0x0CE6, 0x0D66, 0x0E50, 0x0ED0, 0x0F20,
+  0x1040, 0x17E0, 0x1810, 0xFF10,
+]);
+
+/** A digit of another script, or an Arabic decimal ("٫") or thousands ("٬") mark. */
+const OTHER_DIGITS = /[\u0660-\u0669\u06F0-\u06F9\u07C0-\u07C9\u0966-\u096F\u09E6-\u09EF\u0A66-\u0A6F\u0AE6-\u0AEF\u0B66-\u0B6F\u0BE6-\u0BEF\u0C66-\u0C6F\u0CE6-\u0CEF\u0D66-\u0D6F\u0E50-\u0E59\u0ED0-\u0ED9\u0F20-\u0F29\u1040-\u1049\u17E0-\u17E9\u1810-\u1819\uFF10-\uFF19\u066B\u066C]/g;
+
+/**
+ * Text with the digits of other scripts written as "0" to "9": Arabic-Indic
+ * ("١٢٣"), Persian ("۱۲۳"), Devanagari ("१२३"), Bengali, Thai, full-width
+ * ("１２３") and the rest, with the Arabic decimal mark "٫" as "." and
+ * thousands mark "٬" as ",". Every character becomes one character, so a
+ * place in the result is the same place in the text. Every reader here
+ * ({@link parseNumber}, {@link readNumber}, {@link parsePrice},
+ * {@link findPrices}) does this first.
+ *
+ * @param {string} text - Any text.
+ * @returns {string} It with Western digits, the same length.
+ * @example
+ * westernDigits('١٬٢٣٤٫٥'); // '1,234.5'
+ * westernDigits('１２３円'); // '123円'
+ */
+export function westernDigits(text) {
+  return text.replace(OTHER_DIGITS, (character) => {
+    if (character === '\u066B') return '.';
+    if (character === '\u066C') return ',';
+    const point = character.charCodeAt(0);
+    const zero = DIGIT_ZEROS.find((start) => point >= start && point <= start + 9) ?? point;
+    return String(point - zero);
+  });
+}
+
 /**
  * A typed number, as a regex source (no anchors, no groups that capture):
  * digits with thousands grouped in threes by ",", ".", a space, a no-break
- * space or a narrow no-break space, and an optional decimal part.
+ * space, a narrow no-break space or a thin space, and an optional decimal part.
  */
-export const NUMBER_SOURCE = String.raw`\d{1,3}(?:[.,\u00A0\u202F ]\d{3})+(?:[.,]\d+)?|\d+(?:[.,]\d+)?|[.,]\d+`;
+export const NUMBER_SOURCE = String.raw`\d{1,3}(?:[.,\u00A0\u202F\u2009 ]\d{3})+(?:[.,]\d+)?|\d+(?:[.,]\d+)?|[.,]\d+`;
 
 const TYPED = new RegExp(`^(?:${NUMBER_SOURCE})$`);
 
@@ -110,12 +144,14 @@ function looksGrouped(parts) {
  * The value of digits with "," and "." marks (nothing else), the decimal mark given.
  *
  * - Both marks: whichever comes last is the decimal mark ("1.500,25", "1,500.25").
- * - One mark: a decimal unless it can only group thousands, or it may group
- *   them and isn't the given decimal mark ("1,500" with "." is 1500; with ",", 1.5).
+ * - One mark, more than once ("1.500.000", "12,34,567"): it groups thousands,
+ *   whatever the decimal mark given: a number has one decimal mark at most.
+ * - One mark, once: a decimal unless it may group thousands and isn't the
+ *   given decimal mark ("1,500" with "." is 1500; with ",", 1.5).
  *
  * @param {string} raw - e.g. "1,500.25".
  * @param {DecimalMark} decimal - The decimal mark for an ambiguous number.
- * @returns {number | null} The value, or null when no reading fits ("1,500,000" with ",").
+ * @returns {number | null} The value, or null when it isn't a number.
  */
 function fromMarks(raw, decimal) {
   const group = decimal === ',' ? '.' : ',';
@@ -128,10 +164,8 @@ function fromMarks(raw, decimal) {
   } else if (hasComma || hasDot) {
     const mark = hasComma ? ',' : '.';
     const parts = raw.split(mark);
-    const isGroup = mark === group && looksGrouped(parts);
-    if (isGroup) normalized = parts.join('');
-    else if (parts.length === 2) normalized = `${parts[0]}.${parts[1]}`;
-    else return null;
+    const isGroup = parts.length > 2 || (mark === group && looksGrouped(parts));
+    normalized = isGroup ? parts.join('') : `${parts[0]}.${parts[1]}`;
   }
   const value = Number(normalized);
   return Number.isFinite(value) ? value : null;
@@ -158,7 +192,7 @@ const markOf = (reading) => (typeof reading === 'string' ? decimalSeparator(read
  * parseNumber('1,500', { decimal: ',' }); // 1.5
  */
 export function parseNumber(text, reading) {
-  const trimmed = text.trim();
+  const trimmed = westernDigits(text).trim();
   if (!TYPED.test(trimmed)) return null;
   return fromMarks(trimmed.replace(SPACE_GROUPS, ''), markOf(reading));
 }
@@ -177,7 +211,7 @@ export function parseNumber(text, reading) {
  * decimalMarkOf('1,500'); // null
  */
 export function decimalMarkOf(text) {
-  const raw = text.replace(/[^\d.,]/g, '');
+  const raw = westernDigits(text).replace(/[^\d.,]/g, '');
   const hasComma = raw.includes(',');
   const hasDot = raw.includes('.');
   if (hasComma && hasDot) return raw.lastIndexOf(',') > raw.lastIndexOf('.') ? ',' : '.';
@@ -193,6 +227,8 @@ const SIGN = /^([+\-−‒–])\s?/;
 
 /**
  * Take a sign and accounting parentheses off the front of a shown number.
+ * Parentheses mean negative, with or without a minus inside ("(5)" and
+ * "(-5)" are both −5).
  *
  * @param {string} text - e.g. "(1,200)", "−5", "+3".
  * @returns {{negative: boolean, rest: string}} Whether it's negative, and what's left, trimmed.
@@ -207,7 +243,7 @@ function peelSign(text) {
   }
   const sign = SIGN.exec(rest);
   if (sign) {
-    if (sign[1] !== '+') negative = !negative;
+    if (sign[1] !== '+') negative = true;
     rest = rest.slice(sign[0].length);
   }
   return { negative, rest };
@@ -238,7 +274,7 @@ function unsignedDisplay(text, decimal) {
  * readNumber('−5', 'en'); // -5
  */
 export function readNumber(text, reading) {
-  const { negative, rest } = peelSign(text);
+  const { negative, rest } = peelSign(westernDigits(text));
   const value = unsignedDisplay(rest, markOf(reading));
   if (value === null) return null;
   return negative && value !== 0 ? -value : value;
@@ -400,9 +436,11 @@ export function symbolCurrency(symbol, reader) {
  * Price prefixes and suffixes as shops write them, where the engine's
  * symbols disagree or have none: "C$" is Nicaragua's to `Intl` and Canada's
  * to shops; "zł", "Kč", "Ft", "RM" (Malaysia), "Rp" (Indonesia), "lei"
- * (Romania), "TL" (Turkey), "S/" (Peru), "Fr." (Switzerland) and the
- * characters for yen, yuan and won ("円", "元", "원") are letters, too risky
- * in running text but plain next to a price.
+ * (Romania), "TL" (Turkey), "S/" and "S/." (Peru), "Fr." and "sFr."
+ * (Switzerland), "đ" and "VNĐ" (Vietnam), "руб" (Russia), "грн" (Ukraine),
+ * "RMB" (China) and the characters for yen, yuan and won ("円", "元", "원")
+ * are letters, too risky in running text but plain next to a price; "JP¥",
+ * "AR$" and "Mex$" name whose yen or dollar it is.
  *
  * @type {ReadonlyArray<readonly [string, string]>}
  */
@@ -411,6 +449,8 @@ export const SHOP_MARKERS = Object.freeze([
   ['HK$', 'HKD'], ['S$', 'SGD'], ['R$', 'BRL'], ['MX$', 'MXN'], ['CHF', 'CHF'], ['zł', 'PLN'],
   ['Kč', 'CZK'], ['Ft', 'HUF'], ['RM', 'MYR'], ['Rp', 'IDR'], ['lei', 'RON'], ['TL', 'TRY'],
   ['S/', 'PEN'], ['Fr.', 'CHF'], ['円', 'JPY'], ['元', 'CNY'], ['원', 'KRW'],
+  ['S/.', 'PEN'], ['sFr.', 'CHF'], ['JP¥', 'JPY'], ['AR$', 'ARS'], ['Mex$', 'MXN'], ['RMB', 'CNY'],
+  ['đ', 'VND'], ['VNĐ', 'VND'], ['руб.', 'RUB'], ['руб', 'RUB'], ['грн', 'UAH'],
 ].map((pair) => Object.freeze(/** @type {const} */ ([pair[0], pair[1]]))));
 
 /** @typedef {readonly [string, string | null]} Marker A marker and its currency (null: the reader decides). */
@@ -458,7 +498,8 @@ function prices() {
  * @property {CurrencyReader} [reader] Whose rupee "₨" is.
  * @property {boolean} [display] Read the number as a page shows it ({@link readNumber}):
  *   apostrophe and Indian groups, a sign or accounting parentheses ("-$5", "$-5",
- *   "(€12.50)"). Default false: a typed, unsigned number.
+ *   "(€12.50)"), and a number that reads either way as {@link findPrices} reads it
+ *   ("50.000 ₫" is fifty thousand). Default false: a typed, unsigned number.
  */
 
 /**
@@ -483,7 +524,8 @@ function prices() {
  */
 export function parsePrice(text, { locale = 'en', decimal, knows = (code) => ISO_CURRENCIES.has(code), reader, display = false } = {}) {
   const grammar = prices();
-  const peeled = display ? peelSign(text) : { negative: false, rest: text };
+  const source = westernDigits(text);
+  const peeled = display ? peelSign(source) : { negative: false, rest: source };
   const match = (display ? grammar.display : grammar.typed).exec(peeled.rest.trim().replace(/\s+/g, ' '));
   if (!match) return null;
   const marker = match[1] ?? match[4];
@@ -491,8 +533,8 @@ export function parsePrice(text, { locale = 'en', decimal, knows = (code) => ISO
   const known = grammar.markers.find(([m]) => m === marker);
   const code = known ? (known[1] ?? symbolCurrency(marker, reader)) : marker;
   if (!code || (!known && !knows(code))) return null;
-  const reading = { decimal: decimal ?? decimalSeparator(locale) };
-  const amount = display ? readNumber(digits, reading) : parseNumber(digits, reading);
+  const mark = decimal ?? decimalSeparator(locale);
+  const amount = display ? priceAmount(digits, code, mark) : parseNumber(digits, { decimal: mark });
   if (amount === null) return null;
   return { amount: peeled.negative && amount !== 0 ? -amount : amount, code };
 }
@@ -522,15 +564,32 @@ const MARKER_SPELLINGS = Object.freeze(/** @type {Record<string, string>} */ ({ 
 const MORE_OWNERS = Object.freeze(/** @type {Record<string, readonly string[]>} */ ({ Rs: ['INR'] }));
 
 /**
- * ISO 4217 codes that are also English words in capitals ("SHOP ALL 50",
- * "TOP 10", "TRY 3 FREE", "CAD 3D", "2 CUP"): {@link findPrices} doesn't take
- * them as currencies unless told to, except the Canadian dollar and the
- * Turkish lira after a number ("12.99 CAD"), where they're never words.
+ * ISO 4217 codes that are also English words or names in capitals ("SHOP ALL
+ * 50", "TOP 10", "TRY 3 FREE", "CAD 3D", "2 CUP", "AMD 5600"): {@link findPrices}
+ * doesn't take them as currencies unless told to, except the Canadian dollar,
+ * the Turkish lira and the Armenian dram after a number ("12.99 CAD"), where
+ * they're never words.
  */
-export const WORD_CODES = Object.freeze(['ALL', 'BAM', 'BOB', 'BTN', 'CAD', 'CUP', 'GEL', 'MAD', 'MOP', 'PEN', 'SOS', 'TOP', 'TRY']);
+export const WORD_CODES = Object.freeze(['ALL', 'AMD', 'BAM', 'BOB', 'BTN', 'CAD', 'CUP', 'GEL', 'MAD', 'MOP', 'PEN', 'SOS', 'TOP', 'TRY']);
 
 /** The {@link WORD_CODES} that are currencies after a number. */
-const CODES_AFTER_NUMBERS = Object.freeze(['CAD', 'TRY']);
+const CODES_AFTER_NUMBERS = Object.freeze(['AMD', 'CAD', 'TRY']);
+
+/**
+ * ISO 4217 codes that name something else before certain numbers, with the
+ * numbers: a version of PHP ("PHP 8.3"), a climate conference ("COP 28"), a
+ * petrol's octane ("RON 95"), a Sustainable Development Goal ("SDG 13").
+ * {@link findPrices} takes none of them as a price; the same code before any
+ * other number ("PHP 1,200", "COP 25.000", "RON 49,99") still is one.
+ *
+ * @type {Readonly<Record<string, RegExp>>}
+ */
+export const NAMED_NUMBERS = Object.freeze({
+  PHP: /^\d(?:\.\d)?$/,
+  COP: /^\d{1,2}$/,
+  RON: /^(?:9\d|10[0-2])$/,
+  SDG: /^(?:[1-9]|1[0-7])$/,
+});
 
 /**
  * Whether a three-letter code is a currency where it's written.
@@ -655,10 +714,45 @@ function inText() {
 }
 
 /**
- * A shown number's value as a price: a number that reads either way
+ * Currencies whose own countries write "." for the decimal mark (the dollars,
+ * sterling, the franc, the yuan, the rupees…): every other currency's write ",".
+ */
+const DOT_DECIMAL_CURRENCIES = new Set([
+  'USD', 'GBP', 'CAD', 'AUD', 'NZD', 'CHF', 'JPY', 'CNY', 'HKD', 'TWD', 'SGD', 'KRW', 'INR', 'PKR', 'LKR', 'BDT', 'NPR',
+  'THB', 'MYR', 'PHP', 'MXN', 'ILS', 'AED', 'SAR', 'QAR', 'EGP', 'NGN', 'KES', 'GHS',
+]);
+
+/** @type {Map<string, boolean>} */
+const spaceGroupCache = new Map();
+
+/**
+ * Whether a locale groups thousands with a space ("1 234 567": French,
+ * Swedish, Polish, Russian, South African English…).
+ *
+ * @param {string} locale - A BCP 47 tag; an invalid one doesn't.
+ * @returns {boolean} True when it does.
+ */
+function groupsWithSpaces(locale) {
+  const known = spaceGroupCache.get(locale);
+  if (known !== undefined) return known;
+  let spaces = false;
+  try {
+    spaces = /^\s$/u.test(new Intl.NumberFormat(locale).formatToParts(1234567).find((part) => part.type === 'group')?.value ?? '');
+  } catch {
+    // Not a locale the engine knows.
+  }
+  spaceGroupCache.set(locale, spaces);
+  return spaces;
+}
+
+/**
+ * A shown number's value as a price. A number that reads either way
  * ("1,500", "1.299") groups thousands when the currency has fewer than three
  * decimals (a price of "1,500" US dollars is fifteen hundred, whatever the
- * page's language); otherwise the locale decides. A "–" for the cents is ".00".
+ * page's language), unless its mark is the decimal mark of both the page and
+ * the currency's own countries: "$3.459" a gallon on an American page and
+ * "1,759 €" a litre on a German one are three decimals. With three decimals
+ * (the dinars), or no currency, the locale decides. A "–" for the cents is ".00".
  *
  * @param {string} digits - The number as written: "1.299,99", "12.–".
  * @param {string | null} code - The currency, if known.
@@ -667,9 +761,13 @@ function inText() {
  */
 function priceAmount(digits, code, decimal) {
   const plain = digits.replace(/[.,](?:--?|–|—)$/, '');
-  const reading = decimalMarkOf(plain) === null && /[.,]\d{3}$/.test(plain) && code && currencyDigits(code) < 3
-    ? { decimal: /** @type {DecimalMark} */ (plain.includes(',') ? '.' : ',') } : { decimal };
-  return readNumber(plain, reading);
+  const places = code ? currencyDigits(code) : 3;
+  if (decimalMarkOf(plain) !== null || !/[.,]\d{3}$/.test(plain) || places >= 3) return readNumber(plain, { decimal });
+  /** @type {DecimalMark} */
+  const mark = plain.includes(',') ? ',' : '.';
+  const home = code && DOT_DECIMAL_CURRENCIES.has(code) ? '.' : ',';
+  const isDecimal = places === 2 && mark === decimal && mark === home;
+  return readNumber(plain, { decimal: isDecimal ? mark : mark === ',' ? '.' : ',' });
 }
 
 /**
@@ -680,6 +778,9 @@ function priceAmount(digits, code, decimal) {
  * @returns {string | null} The one there is, a shared symbol's usual one, or null.
  */
 const usualPick = (marker, codes) => (codes.length === 1 ? codes[0] : SHARED_SYMBOLS[SUBUNIT_MARKERS[marker] ?? MARKER_SPELLINGS[marker] ?? marker] ?? null);
+
+/** A number grouped by plain spaces and nothing else ("5 200", "1 000 000"), its first group captured. */
+const LOOSE_GROUPS = /^(\d{1,3})(?: \d{3})+$/;
 
 /** A currency code just after a price: "$12.99 CAD". */
 const TRAILING_CODE = /^[ \u00A0\u202F\u2009]?([A-Z]{3})(?![\p{L}\p{N}])/u;
@@ -700,7 +801,8 @@ const RANGE_GAP = /^\s*(?:[-–—]|to|bis|à|a|até|tot|till|〜|~)\s*$/i;
  */
 function joinRanges(text, found, amountOf) {
   const { number } = inText();
-  const bareAfter = new RegExp(`^\\s?[-–—]\\s?(${number})(?![\\p{L}\\p{N}]|[.,]\\p{N})`, 'u');
+  // "$1-800-555-1234" is a phone number: a range has two ends.
+  const bareAfter = new RegExp(`^\\s?[-–—]\\s?(${number})(?![\\p{L}\\p{N}]|[.,]\\p{N}|[-–—]\\p{N})`, 'u');
   const bareBefore = new RegExp(`(?<![\\p{L}\\p{N}.,])(${number})\\s?[-–—]\\s?$`, 'u');
   /** @type {FoundPrice[]} */
   const joined = [];
@@ -756,19 +858,22 @@ function joinRanges(text, found, amountOf) {
  */
 export function findPrices(text, { locale = 'en', decimal, knows = isCurrencyCode, pick = usualPick } = {}) {
   const mark = decimal ?? decimalSeparator(locale);
+  const spaced = groupsWithSpaces(locale);
+  const source = westernDigits(text);
   /** @param {string} digits @param {string | null} code @returns {number | null} */
   const amountOf = (digits, code) => priceAmount(digits, code, mark);
   /** @type {FoundPrice[]} */
   const found = [];
   const { pattern } = inText();
   pattern.lastIndex = 0;
-  for (let match = pattern.exec(text); match; match = pattern.exec(text)) {
+  for (let match = pattern.exec(source); match; match = pattern.exec(source)) {
     const marker = match[1] ?? match[4];
-    const digits = match[2] ?? match[3];
+    let digits = match[2] ?? match[3];
     const isCode = /^[A-Z]{3}$/.test(marker) && !SHOP_MARKERS.some(([m]) => m === marker);
     // A code runs into the number after it only in names ("USD1", a coin; "EUR5" a model): a price spaces it.
-    const glued = isCode && match[1] && !/\s/.test(text.charAt(match.index + marker.length));
-    if (isCode && (glued || !knows(marker, match[1] ? 'before' : 'after'))) {
+    const glued = isCode && match[1] && !/\s/.test(source.charAt(match.index + marker.length));
+    const named = isCode && match[1] && NAMED_NUMBERS[marker]?.test(digits);
+    if (isCode && (glued || named || !knows(marker, match[1] ? 'before' : 'after'))) {
       // "UVP 129,99 €": the word isn't a currency, but what follows it may be a price.
       if (match[1]) pattern.lastIndex = match.index + marker.length;
       continue;
@@ -778,13 +883,26 @@ export function findPrices(text, { locale = 'en', decimal, knows = isCurrencyCod
     if (!codes.length) continue;
     let start = match.index;
     let end = start + match[0].length;
+    // "Only $5 200 left": where thousands aren't grouped with spaces, a plain space after a price ends it.
+    const first = match[1] && !spaced ? LOOSE_GROUPS.exec(digits) : null;
+    if (first) {
+      end -= digits.length - first[1].length;
+      digits = first[1];
+      pattern.lastIndex = end;
+    }
+    // "$5CAD": the sign before the number is the price's too, when it can be that currency's.
+    const sign = match[1] ? '' : source.charAt(start - 1);
+    if (/\p{Sc}/u.test(sign)) {
+      if (!isCode || !symbolCurrencies(sign).includes(marker)) continue;
+      start -= 1;
+    }
     // "$12.99 CAD", "AUD $49.95": a code beside a shared symbol says whose it is.
-    const named = codes.length > 1 && match[1] ? TRAILING_CODE.exec(text.slice(end)) : null;
-    const leading = codes.length > 1 && match[1] && !(named && codes.includes(named[1])) ? LEADING_CODE.exec(text.slice(0, start)) : null;
+    const trailing = codes.length > 1 && match[1] ? TRAILING_CODE.exec(source.slice(end)) : null;
+    const leading = codes.length > 1 && match[1] && !(trailing && codes.includes(trailing[1])) ? LEADING_CODE.exec(source.slice(0, start)) : null;
     let code = pick(marker, codes);
-    if (named && codes.includes(named[1])) {
-      code = named[1];
-      end += named[0].length;
+    if (trailing && codes.includes(trailing[1])) {
+      code = trailing[1];
+      end += trailing[0].length;
     } else if (leading && codes.includes(leading[1])) {
       code = leading[1];
       start -= leading[0].length;
@@ -792,7 +910,8 @@ export function findPrices(text, { locale = 'en', decimal, knows = isCurrencyCod
     const whole = amountOf(digits, code);
     if (whole === null) continue;
     const amount = subunit ? Math.round(whole * 1e4) / 1e6 : whole;
-    found.push({ start, end, text: text.slice(start, end), marker, codes, code, amount });
+    found.push({ start, end, text: source.slice(start, end), marker, codes, code, amount });
   }
-  return joinRanges(text, found, amountOf);
+  // Each price as the text writes it, whatever digits it uses.
+  return joinRanges(source, found, amountOf).map((price) => ({ ...price, text: text.slice(price.start, price.end) }));
 }

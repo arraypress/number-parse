@@ -9,8 +9,8 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   SUBUNIT_MARKERS, currencyDigits, currencySymbols, decimalMarkOf, decimalSeparator, DISPLAY_NUMBER_SOURCE, ECB_CURRENCIES, findPrices,
-  ISO_CURRENCIES, NUMBER_SOURCE, parseNumber, parsePrice, readNumber, RUPEE_SIGN, SHARED_MARKERS, SHOP_MARKERS,
-  symbolCharacters, symbolCurrencies, symbolCurrency, WORD_CODES,
+  ISO_CURRENCIES, NAMED_NUMBERS, NUMBER_SOURCE, parseNumber, parsePrice, readNumber, RUPEE_SIGN, SHARED_MARKERS, SHOP_MARKERS,
+  symbolCharacters, symbolCurrencies, symbolCurrency, westernDigits, WORD_CODES,
 } from '../src/index.js';
 
 /**
@@ -53,6 +53,30 @@ describe('parseNumber (typed)', () => {
     assert.equal(parseNumber('.5', 'en'), 0.5);
   });
 
+  it('reads a mark written twice as thousands, even where it is the locale’s decimal mark', () => {
+    assert.equal(parseNumber('1,500,000', 'de'), 1500000);
+    assert.equal(parseNumber('1.500.000', 'en'), 1500000);
+    assert.equal(parseNumber('1.500.000,25', 'en'), 1500000.25);
+    assert.equal(readNumber('1.500.000', 'en'), 1500000);
+    assert.equal(readNumber('15.000.000', 'ja'), 15000000);
+    assert.equal(readNumber('1,500,000', 'de'), 1500000);
+    assert.equal(readNumber('12,34,567', 'de'), 1234567);
+    assert.equal(readNumber('1.2.3', 'en'), null);
+  });
+
+  it('reads the digits of other scripts', () => {
+    /** @type {[string, number][]} */
+    const cases = [['١٢٣٤', 1234], ['١٬٢٣٤٫٥', 1234.5], ['۱۲۳۴', 1234], ['१२३', 123], ['১২৩', 123], ['๑๒๓', 123], ['１２３', 123], ['１,２３４.５', 1234.5]];
+    for (const [text, value] of cases) {
+      assert.equal(readNumber(text, 'en'), value, text);
+      assert.equal(parseNumber(text, 'en'), value, text);
+      assert.equal(westernDigits(text).length, text.length, text);
+    }
+    assert.equal(westernDigits('١٬٢٣٤٫٥ ر.س'), '1,234.5 ر.س');
+    assert.equal(decimalMarkOf('١٫٥'), '.');
+    assert.deepEqual(parsePrice('SAR ١٢٣٤'), { amount: 1234, code: 'SAR' });
+  });
+
   it('takes spaces as thousands groups only', () => {
     assert.equal(parseNumber('1 500', 'fr'), 1500);
     assert.equal(parseNumber('1 500,5', 'fr'), 1500.5);
@@ -61,7 +85,6 @@ describe('parseNumber (typed)', () => {
   });
 
   it('refuses what has no single reading, or isn’t a bare number', () => {
-    assert.equal(parseNumber('1,500,000', 'de'), null);
     for (const text of ['', '-5', '5%', '1\'234', '12,34,567', 'abc', '1..5', '$5']) assert.equal(parseNumber(text, 'en'), null, text);
   });
 
@@ -111,6 +134,10 @@ describe('readNumber (display)', () => {
     assert.equal(readNumber('(1,200.50)', 'en'), -1200.5);
     assert.equal(readNumber('- 3,5', 'de'), -3.5);
     assert.ok(Object.is(readNumber('-0', 'en'), 0));
+    // Parentheses are the minus: a sign inside them doesn't undo it.
+    assert.equal(readNumber('(-5)', 'en'), -5);
+    assert.equal(readNumber('(−1,200.50)', 'en'), -1200.5);
+    assert.deepEqual(parsePrice('(−€5)', { display: true }), { amount: -5, code: 'EUR' });
   });
 
   it('refuses mixed or broken groups and anything around the number', () => {
@@ -217,6 +244,21 @@ describe('parsePrice', () => {
     assert.equal(parsePrice('$5 – $10', { display: true }), null);
   });
 
+  it('reads a shown price that reads either way as findPrices does', () => {
+    assert.deepEqual(parsePrice('50.000₫', { display: true }), { amount: 50000, code: 'VND' });
+    assert.deepEqual(parsePrice('Rp 1.500.000', { display: true }), { amount: 1500000, code: 'IDR' });
+    assert.deepEqual(parsePrice('€1.299', { display: true }), { amount: 1299, code: 'EUR' });
+    assert.deepEqual(parsePrice('$3.459', { display: true }), { amount: 3.459, code: 'USD' });
+    // Typed, the locale alone decides, as before.
+    assert.deepEqual(parsePrice('€1.299'), { amount: 1.299, code: 'EUR' });
+  });
+
+  it('reads the markers shops write that Intl has no symbol for', () => {
+    /** @type {[string, string][]} */
+    const cases = [['S/. 12.50', 'PEN'], ['sFr. 12.50', 'CHF'], ['JP¥1,200', 'JPY'], ['AR$ 100', 'ARS'], ['Mex$100', 'MXN'], ['RMB 100', 'CNY'], ['100 RMB', 'CNY'], ['100 руб.', 'RUB'], ['100 грн', 'UAH'], ['100đ', 'VND'], ['100 VNĐ', 'VND']];
+    for (const [text, code] of cases) assert.equal(parsePrice(text)?.code, code, text);
+  });
+
   it('keeps the shop markers ahead of Intl’s readings', () => {
     assert.deepEqual(SHOP_MARKERS.find(([marker]) => marker === 'C$'), ['C$', 'CAD']);
     assert.deepEqual(parsePrice('C$10'), { amount: 10, code: 'CAD' });
@@ -297,7 +339,54 @@ describe('findPrices', () => {
     ['12.99 CAD', [['12.99 CAD', 'CAD', 12.99]]],
     ['€1.299', [['€1.299', 'EUR', 1299]]],
     ['$1,500', [['$1,500', 'USD', 1500]]],
-    ['1,500 €', [['1,500 €', 'EUR', 1500]], { locale: 'de' }],
+    ['1,500 USD', [['1,500 USD', 'USD', 1500]], { locale: 'de' }],
+    // A mark written twice groups thousands whatever the page's language.
+    ['Rp 1.500.000', [['Rp 1.500.000', 'IDR', 1500000]]],
+    ['COP 1.500.000', [['COP 1.500.000', 'COP', 1500000]]],
+    ['₫1.200.000', [['₫1.200.000', 'VND', 1200000]]],
+    ['1.200.000đ', [['1.200.000đ', 'VND', 1200000]]],
+    ['$ 1.250.000', [['$ 1.250.000', 'USD', 1250000]]],
+    ['1,500,000 €', [['1,500,000 €', 'EUR', 1500000]], { locale: 'de' }],
+    // Three decimals, where the page and the currency's own countries both write that mark for decimals.
+    ['Regular $3.459/gal', [['$3.459', 'USD', 3.459]]],
+    ['Super E10 1,759 €', [['1,759 €', 'EUR', 1.759]], { locale: 'de' }],
+    ['EUR/USD 1.085', [['USD 1.085', 'USD', 1.085]]],
+    ['¥1.234', [['¥1.234', 'JPY', 1234]]],
+    ['250.000 €', [['250.000 €', 'EUR', 250000]]],
+    ['€1,234', [['€1,234', 'EUR', 1234]]],
+    ['$1.234', [['$1.234', 'USD', 1234]], { locale: 'es' }],
+    // A plain space ends a price where thousands aren't grouped with spaces.
+    ['Only $5 200 left in stock', [['$5', 'USD', 5]]],
+    ['$10 100% cotton', [['$10', 'USD', 10]]],
+    ['€20 365 days', [['€20', 'EUR', 20]]],
+    ['$5 200 left, then $6', [['$5', 'USD', 5], ['$6', 'USD', 6]]],
+    ['€ 1 234 567', [['€ 1 234 567', 'EUR', 1234567]], { locale: 'fr' }],
+    ['R 1 250 000', [], { locale: 'en-ZA' }],
+    ['ZAR 1 250 000', [['ZAR 1 250 000', 'ZAR', 1250000]], { locale: 'en-ZA' }],
+    ['$1\u00A0234', [['$1\u00A0234', 'USD', 1234]]],
+    ['€ 1 234,56', [['€ 1 234,56', 'EUR', 1234.56]]],
+    ['2 500 €', [['2 500 €', 'EUR', 2500]]],
+    // Digits of other scripts, the text kept as written.
+    ['السعر ١٬٢٣٤ SAR', [['١٬٢٣٤ SAR', 'SAR', 1234]]],
+    ['１,２００円', [['１,２００円', 'JPY', 1200]]],
+    ['₹१,२३,४५६', [['₹१,२३,४५६', 'INR', 123456]]],
+    // A sign before the number belongs to a code after it.
+    ['$5CAD', [['$5CAD', 'CAD', 5]]],
+    ['€5USD', []],
+    // A phone number is no range.
+    ['Call $1-800-555-1234', [['$1', 'USD', 1]]],
+    // Shop markers.
+    ['S/. 12.50', [['S/. 12.50', 'PEN', 12.5]]],
+    ['1 234 руб.', [['1 234 руб.', 'RUB', 1234]], { locale: 'ru' }],
+    ['100 рублей', []],
+    ['JP¥1,200', [['JP¥1,200', 'JPY', 1200]]],
+    // Codes that still are prices beside the numbers that name something else.
+    ['PHP 1,200', [['PHP 1,200', 'PHP', 1200]]],
+    ['PHP 49.50', [['PHP 49.50', 'PHP', 49.5]]],
+    ['COP 25.000', [['COP 25.000', 'COP', 25000]]],
+    ['RON 49,99', [['RON 49,99', 'RON', 49.99]]],
+    ['95 RON', [['95 RON', 'RON', 95]]],
+    ['5,600 AMD', [['5,600 AMD', 'AMD', 5600]]],
     ['KWD 1.500', [['KWD 1.500', 'KWD', 1.5]]],
     ['AUD $49.95', [['AUD $49.95', 'AUD', 49.95]]],
     ['CLP $12.500', [['CLP $12.500', 'CLP', 12500]]],
@@ -318,6 +407,10 @@ describe('findPrices', () => {
       assert.deepEqual(rows(text), [], text);
     }
     for (const code of WORD_CODES) assert.deepEqual(rows(`${code} 12`), [], code);
+    for (const text of ['PHP 8.3 released', 'Requires PHP 8 or later', 'COP 28 in Dubai', 'RON 95 petrol', 'SDG 13 climate action', 'AMD 5600 vs Intel']) {
+      assert.deepEqual(rows(text), [], text);
+    }
+    assert.deepEqual(Object.keys(NAMED_NUMBERS), ['PHP', 'COP', 'RON', 'SDG']);
     assert.deepEqual(Object.keys(SUBUNIT_MARKERS), ['¢']);
   });
 
