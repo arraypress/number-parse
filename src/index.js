@@ -782,6 +782,9 @@ const usualPick = (marker, codes) => (codes.length === 1 ? codes[0] : SHARED_SYM
 /** A number grouped by plain spaces and nothing else ("5 200", "1 000 000"), its first group captured. */
 const LOOSE_GROUPS = /^(\d{1,3})(?: \d{3})+$/;
 
+/** Text that carries on after a number: a word or another number, or a percent sign. */
+const RUNS_ON = /^(?:\s*[\p{L}\p{N}]|\s?%)/u;
+
 /** A currency code just after a price: "$12.99 CAD". */
 const TRAILING_CODE = /^[ \u00A0\u202F\u2009]?([A-Z]{3})(?![\p{L}\p{N}])/u;
 
@@ -883,8 +886,9 @@ export function findPrices(text, { locale = 'en', decimal, knows = isCurrencyCod
     if (!codes.length) continue;
     let start = match.index;
     let end = start + match[0].length;
-    // "Only $5 200 left": where thousands aren't grouped with spaces, a plain space after a price ends it.
-    const first = match[1] && !spaced ? LOOSE_GROUPS.exec(digits) : null;
+    // "Only $5 200 left", "$10 100% cotton": where thousands aren't grouped with spaces, a plain space after a price
+    // ends it when more words follow. A price on its own ("₴1 299") is a price in a language the page didn't name.
+    const first = match[1] && !spaced && RUNS_ON.test(source.slice(end)) ? LOOSE_GROUPS.exec(digits) : null;
     if (first) {
       end -= digits.length - first[1].length;
       digits = first[1];

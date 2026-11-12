@@ -99,7 +99,7 @@ findPrices('USD1 stablecoin');                // []: a code runs into a number o
 findPrices('€1.299')[0].amount;               // 1299: a price with 3 digits after its only mark groups thousands…
 findPrices('Regular $3.459/gal')[0].amount;   // 3.459: …unless the page and the currency both write that mark for decimals
 findPrices('Rp 1.500.000')[0].amount;         // 1500000, whatever the page's language
-findPrices('Only $5 200 left')[0].amount;     // 5: a plain space groups thousands only where the locale's numbers do
+findPrices('Only $5 200 left')[0].amount;     // 5: before more words, a plain space groups thousands only where the locale's numbers do
 findPrices('2026, 20% off, TOP 10, 555-1234'); // []: no marker, or a code that's a word ("TOP", "ALL")
 findPrices('PHP 8.3, COP 28, RON 95');        // []: NAMED_NUMBERS ("PHP 1,200" is still a price)
 
